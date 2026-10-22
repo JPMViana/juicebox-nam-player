@@ -126,6 +126,10 @@ def parse_identity(pkt):
     if len(d) != 34 or d[:3] != b"\x00\x59\x11":
         return None
     txt = printable(d[6:33].rstrip(b"\0"))
+    if not txt:
+        # the official update loader started with a RAM-only update record (armaria-nam) answers
+        # an empty identity: an update loader of unknown model
+        return Identity("ota-?", "ota-?", 0)
     m = re.fullmatch(r"([^_]+)_(\d+)", txt)
     return Identity(txt, m[1], int(m[2])) if m else None
 
@@ -367,7 +371,7 @@ class Updater:
     def install(self, dev, image, product, step=lambda *a: None):
         """running firmware -> loader -> new firmware; dev from find(). A device already in
         update mode only needs the write."""
-        if model_of(dev.id.text) != model_of(product):
+        if dev.id.text != "ota-?" and model_of(dev.id.text) != model_of(product):
             dev.link.close()
             raise InstallError("model", f"the device is {dev.id.text}, the package is for {product}")
         ota = dev if dev.id.loader else self.check(dev, image, step)

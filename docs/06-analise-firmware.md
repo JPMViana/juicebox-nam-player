@@ -57,8 +57,10 @@ Controlador **ST7789** (comandos MIPI-DCS), interface SPI de 4 fios, só escrita
 
 - `JL_SPI1->CON = 0x4020`, `BAUD = 1` (SCK = LSB/2), envio de dados por DMA
   (`ADR`/`CNT`), espera pelo bit 15 do `CON`.
-- **Área visível 240×240** na RAM de um controlador 240×320: `CASET 0..239`,
-  `RASET 40..279`. A rotina de limpar tela (`0x2028FF0`) varre os 320×240 inteiros
+- **Área visível 240×240 = linhas 0..239** da RAM de um controlador 240×320
+  (confirmado no pedal com o armaria-nam v0.1: desenhando a partir da linha 40, a
+  imagem saiu cortada embaixo e o topo mostrou restos da UI de fábrica). O
+  `RASET 40..279` da tabela de init é só uma janela inicial. A rotina de limpar tela (`0x2028FF0`) varre os 320×240 inteiros
   e depois manda `DISPON (0x29)`.
 - Cor **RGB565** (`COLMOD 0x55`), `MADCTL 0x00`, inversão ligada.
 

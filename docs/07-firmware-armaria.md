@@ -4,7 +4,13 @@ Nome provisório: **armaria-nam**. Identidade no protocolo de update: `BlackBox_
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
-## v0.1 (2026-10-22) — gravado e rodando
+## v0.1.1 (2026-10-22) — gravado e rodando
+
+- Tela: área visível nas linhas 0..239 do controlador (a v0.1 usava 40..279); limpa
+  toda a RAM do controlador (240×320) antes da imagem, para não sobrar nada da UI de fábrica.
+- Identidade `BlackBox_902`; instalada a partir do V20 com `--bump-cfg`.
+
+## v0.1 (2026-10-22)
 
 O que faz:
 
@@ -26,12 +32,18 @@ Não faz ainda: áudio, footswitches, botões, knobs.
 
 - Instalado a partir do app de fábrica (`BlackBox_019` → `BlackBox_901`), 48 + gravação 100 %.
 - Enumera como `armaria-nam` / `armaria`; `bb_install.py --info` → `BlackBox_901 [running]`.
-- Tela: aguardando confirmação visual.
+- Tela (v0.1): imagem e knob visíveis, mas deslocadas 40 linhas para baixo → corrigido na v0.1.1.
+- **Update a partir do armaria-nam → V20: funcionou.** O step 1 do nosso firmware
+  aceitou o pacote (75 leituras), gravou o registro na RAM e reiniciou; o SPL subiu o
+  carregador oficial (`4D4A:4155`, "Jieli Technology"), que gravou o V20 (100 %) e voltou
+  como `BlackBox_020`.
+  - Achado: iniciado só com o registro na RAM, o carregador oficial responde ao
+    handshake com **identidade vazia** (deve ler a identidade de um registro na flash,
+    que não escrevemos de propósito). `bb_install.py` aceita isso como `ota-?`.
+- V20 → armaria-nam v0.1.1 de novo: funcionou (`BlackBox_902`).
 
 ### Ainda não verificado
 
-- **Update a partir do nosso firmware** (voltar ao V20): é o próximo teste e o mais
-  importante para a segurança.
 - Resgate por boot falho (só ocorre se algo travar).
 
 ## Estrutura

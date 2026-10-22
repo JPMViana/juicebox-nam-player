@@ -19,7 +19,7 @@
  * the HAL, USB and update code we reuse. Single compilation unit. */
 #include <stdint.h>
 
-#define ARMARIA_VERSION "v0.1"
+#define ARMARIA_VERSION "v0.1.1"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -89,8 +89,9 @@ static void delay_poll(uint32_t ms)
 
 /* --------------------------------------------------------------- display --- */
 /* ST7789 240x240 on SPI1 port A (docs/06-analise-firmware.md): SCK PB6, data PB7, D/C PB5, CS PB1,
- * PC7 low (backlight or reset: the stock firmware drives it low first). Visible rows sit at 40..279
- * of the controller RAM. Pin and register sequence copied from the stock init (0x0202A658). */
+ * PC7 low (backlight or reset: the stock firmware drives it low first). The visible area is rows 0..239
+ * of the 240x320 controller RAM (seen on the pedal with v0.1; the stock init table's RASET 40..279 is
+ * only a start-up window). Pin and register sequence copied from the stock init (0x0202A658). */
 #define PB_OUT (*(volatile uint32_t *)0x50040u)
 #define PB_DIR (*(volatile uint32_t *)0x50048u)
 #define PC_OUT (*(volatile uint32_t *)0x50080u)
@@ -102,7 +103,8 @@ static void delay_poll(uint32_t ms)
 #define SPI1_CNT (*(volatile uint32_t *)0x11D10u)
 #define LCD_CS (1u << 1)
 #define LCD_DC (1u << 5)
-#define LCD_ROW0 40u
+#define LCD_ROW0 0u
+#define LCD_RAM_ROWS 320u
 #define LCD_W 240u
 #define LCD_H 240u
 
@@ -228,9 +230,22 @@ static void lcd_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
     }
 }
 
+static void lcd_clear_ram(void)                 /* the whole controller RAM: no leftovers of the stock UI */
+{
+    uint32_t i, r;
+    for (i = 0; i < LCD_W * 2u; i++)
+        lcd_buf[i] = 0;
+    lcd_window(0, 0, LCD_W - 1u, LCD_RAM_ROWS - 1u);
+    for (r = 0; r < LCD_RAM_ROWS; r++) {
+        lcd_data(lcd_buf, LCD_W * 2u);
+        poll();
+    }
+}
+
 static void lcd_splash(void)
 {
     uint32_t r, i;
+    lcd_clear_ram();
     lcd_window(0, 0, LCD_W - 1u, LCD_H - 1u);
     for (r = 0; r < LCD_H; r++) {
         const uint8_t *src = SPLASH565 + r * LCD_W * 2u;
