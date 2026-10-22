@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.5.1"
+#define JB_VERSION "v0.5.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_911"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_912"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_911"
+#define OTA_LOADER_ID "ota-BlackBox_912"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -452,7 +452,8 @@ static void test_send(uint32_t din, const int32_t *a)
 
 /* ------------------------------------------------------------------ LEDs --- */
 /* Button LEDs behind an 8-bit shift register (the stock 0x02005E9C): PC5 clock, PC8 data, PC6 latch,
- * PC7 high = enabled (the LCD init drives PC7 low first, as stock). 8 bits, first shifted bit first. */
+ * PC7 = output enable, active LOW (v0.5.1 drove it high: all LEDs off; with it low, as the LCD init leaves it,
+ * the register's random power-on content showed). 8 bits, first shifted bit first. */
 static void led_write(uint8_t v)
 {
     uint32_t b;
@@ -474,8 +475,7 @@ static void led_write(uint8_t v)
 static void led_init(void)
 {
     uint32_t m = (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8);
-    PORT_REG(P_C, R_OUT) |= 1u << 7;
-    PORT_REG(P_C, R_OUT) &= ~((1u << 5) | (1u << 6) | (1u << 8));
+    PORT_REG(P_C, R_OUT) &= ~((1u << 5) | (1u << 6) | (1u << 7) | (1u << 8));
     PORT_REG(P_C, R_DIR) &= ~m;
     led_write(0);
 }
@@ -483,9 +483,9 @@ static void led_init(void)
 /* ----------------------------------------------------------------- audio --- */
 /* External codec on ALNK0 (I2S), set up as the stock firmware does (docs/06, 0x02007490):
  * MCLK PA4, SCLK PA5, LRCK PA6, channel 0 = TX (DAC) on PA7, channel 1 = RX (ADC) on PA8, PA9 = codec
- * enable (low, then high once the link runs). ~44118 Hz, 24-bit RIGHT-justified in int32 (bits 23..0, bit 23
- * = sign, top byte 0: measured with tools/jb_audio.py in v0.5; v0.4 read it left-justified = loud hiss),
- * L/R interleaved.
+ * enable (low, then high once the link runs). ~44118 Hz. RX (ADC): 24-bit RIGHT-justified in int32 (bits
+ * 23..0, measured with tools/jb_audio.py; v0.4 read it left-justified = loud hiss). TX (DAC): LEFT-justified
+ * (v0.5.1 wrote right-justified = silence; v0.4's << 8 sounded). L/R interleaved; the guitar is on L.
  * Double-buffered DMA; polled from poll(): CON2 bit 4 + ch = half done, write bit ch to clear;
  * CON0 bit 15 = the half the DMA is in. v0.4: passthrough, MASTER pot = output level. */
 #define ALNK 0x12E00u
@@ -505,7 +505,7 @@ static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
 static uint32_t au_peak[2];                       /* |input| peak per channel since the last read */
 static uint32_t au_halves, au_late;
-static volatile uint8_t au_route;                 /* 0 stereo, 1 L to both, 2 R to both (FX button) */
+static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (default: the guitar is on L), 2 R */
 static volatile uint8_t snap_req, snap_ready;
 static int32_t snap_buf[AU_HALF] __attribute__((aligned(4)));
 
@@ -609,7 +609,7 @@ static void audio_service(void)
             y = 0x7FFFFF;
         if (y < -0x800000)
             y = -0x800000;
-        out[i] = (int32_t)y;                      /* 24-bit, right-justified */
+        out[i] = (int32_t)((uint32_t)y << 8);     /* 24-bit, left-justified for the DAC */
     }
     ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
 }
