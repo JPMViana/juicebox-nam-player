@@ -87,9 +87,26 @@ janela + blit `0x0201E292`.
 quase direto. Trocar pinos (port A: PB6/PB7, D/C PB5, CS PB1), o offset de linha
 (+40) e a tabela de init acima.
 
+## Áudio — conclusão provisória
+
+**Codec interno do AC791N** (ADC + DAC do bloco `JL_AUDIO`), sem codec externo:
+
+- `JL_AUDIO` (`0x12F00`): o app acessa `DAC_CON` (`+0x00`) e `ADC_CON` (`+0x40`)
+  e outros registradores do ADC/DAC; driver do SDK em `0x02049800`–`0x0204C200`.
+- `JL_ANA` (`0x11900`, 34 refs): front-end analógico (ganho, seleção de entrada, LDOs).
+- I²S (`ALNK0/1`): nenhum ponteiro de base em tabela; a única função de placa
+  (`0x02029D6C`, chamada pelo init da tela) **solta** os pinos do I²S e zera `CON1`.
+- I²C (`JL_IIC`, `0x12400`): nunca acessado. Um codec externo precisaria dele.
+- String `linein` presente: entrada da guitarra provavelmente pelo caminho line-in/AUX do ADC.
+
+Implicações: a saída (DAC) já é dominada pelo Felucca (`hal/fm1_audio.h`, mesmo
+chip). **A entrada (ADC) é o ponto novo**: precisamos rastrear as escritas em
+`ADC_CON` e `JL_ANA` do app de fábrica (`0x0204AF4C`, `0x0204B73A`) e replicá-las.
+A especificação de 105 dB de faixa dinâmica é do fabricante, não foi medida.
+
 ## Próximos alvos
 
-- [ ] Áudio: entrada (ADC interno via `JL_AUDIO`/`JL_ANA` ou I²S via `ALNK`?), DAC de saída, taxa, DMA
+- [ ] Áudio: rastrear init do ADC (`ADC_CON`, `JL_ANA`), canal line-in, taxa, DMA
 - [ ] Footswitches e encoders/botões (GPIO ou SARADC)
 - [ ] PC7 e backlight; LEDs
 - [ ] Bateria/carga (`JL_P33`, SARADC)
