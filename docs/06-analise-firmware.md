@@ -106,10 +106,11 @@ passo a do Felucca no FM-1 (`hal/fm1_audio.h`), com outros pinos:
 | Habilita o codec | **PA9** | 0 no início, 1 depois que o link roda (como o PC6 do FM-1) |
 
 - `IOMAP_CON5` bits 7:6 = `01` (o FM-1 usa `00`); `CON3 |= 3`; `CLK_CON2 &= ~0xF00`.
-- Taxa **44118 Hz** (`0x01C25758 = 44118`). **Entrada (ADC): 24 bits alinhados à DIREITA**; **saída (DAC): alinhados à ESQUERDA** (`amostra << 8`). Guitarra no canal **L**. Entrada: int32 (bits 23..0,
+- Taxa **44118 Hz** (`0x01C25758 = 44118`). **Entrada e saída: 24 bits alinhados à DIREITA** (saída medida com interface de áudio, `tools/jb_measure.py`: só RJ24 gera o tom certo; o `<< 8` da v0.4–v0.7 gerava ruído embaralhado). Guitarra no canal **L**. Entrada: int32 (bits 23..0,
   bit 23 = sinal, byte de cima 0 — medido com `tools/jb_audio.py`), L/R intercalados; buffers de 1 KB por canal, `LEN = 128` palavras por metade no V20.
 - `CON1`: por canal `ch`, bit `4ch` liga, bit `4ch+2` (sempre), bit `4ch+3` = RX.
-  `CON2`: bit `4+ch` = metade concluída, escrever bit `ch` limpa. `CON0` bit 15 = metade em uso.
+  `CON2`: bit `4+ch` = metade concluída, escrever bit `ch` limpa. `CON0` bit 15 **não alterna** neste uso (sempre 0): a metade é controlada por software.
+- Tom de 440 Hz −12 dBFS medido na saída (v0.7.2): **THD 0,12 %**, resíduos < −50 dB.
 - Sem I²C: o codec é configurado por pinos (modelo ainda não identificado; foto da placa
   confirmaria). O bloco `JL_AUDIO` interno é tocado pelo driver do SDK, mas não é o caminho do som.
 

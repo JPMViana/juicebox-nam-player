@@ -106,7 +106,7 @@ def main():
         st = struct.unpack("<8I", unpack7(r[0][5:-1])[:32])
         fs = 1 << 23
         print(f"halves {st[0]}  late-polls {st[1]}  input peak {st[2]} ({20 * math.log10(max(st[2], 1) / fs):.1f} dBFS)  "
-              f"clipped in {st[3]} out {st[4]}  max processing {st[5]} us of 2900  gain {st[6] / 65536:.3f}  route {st[7]}")
+              f"clipped in {st[3]} out {st[4]}  max processing {st[5]} us of 2900  CON0.b15=0: {st[6]}  =1: {st[7]}")
         return
     w = capture(names[0], outs[0], 1 if a.trigger else a.snaps, a.trigger, a.wait if a.trigger else 2.0)
     if not w:

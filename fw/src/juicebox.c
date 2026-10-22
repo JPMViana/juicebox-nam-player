@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.7.1"
+#define JB_VERSION "v0.7.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_915"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_916"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_915"
+#define OTA_LOADER_ID "ota-BlackBox_916"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -505,8 +505,9 @@ static void led_init(void)
  * enable (low, then high once the link runs). ~44118 Hz. RX (ADC): 24-bit RIGHT-justified in int32 (bits
  * 23..0, measured with tools/jb_audio.py; v0.4 read it left-justified = loud hiss). TX (DAC): LEFT-justified
  * (v0.5.1 wrote right-justified = silence; v0.4's << 8 sounded). L/R interleaved; the guitar is on L.
- * Double-buffered DMA; polled from poll(): CON2 bit 4 + ch = half done, write bit ch to clear;
- * CON0 bit 15 = the half the DMA is in. v0.4: passthrough, MASTER pot = output level. */
+ * Double-buffered DMA; polled from poll(): CON2 bit 4 + ch = half done, write bit ch to clear.
+ * CON0 bit 15 does NOT toggle here (always 0, measured in v0.7.2): the half index is kept in software.
+ * TX is RJ24 as well (v0.7.1 measurement through an audio interface: the only format giving 440 Hz). v0.4: passthrough, MASTER pot = output level. */
 #define ALNK 0x12E00u
 #define ALNK_CON0 (*(volatile uint16_t *)(ALNK + 0x00u))
 #define ALNK_CON1 (*(volatile uint16_t *)(ALNK + 0x04u))
@@ -528,7 +529,8 @@ static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (defa
 static volatile uint8_t snap_req, snap_ready, snap_trig;
 static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
 /* v0.7 output diagnostics: MOD = guitar / 440 Hz test tone; AMP = the DAC word format */
-static volatile uint8_t au_tone, au_fmt;
+static volatile uint8_t au_tone, au_fmt = 4;      /* RJ24: measured right (tools/jb_measure.py, v0.7.1) */
+static uint32_t au_h, au_b15[2];                  /* software half index; CON0 bit 15 histogram (diagnostic) */
 static volatile int32_t au_gain_force = -1;      /* >= 0: USB-set Q16 gain overrides MASTER (JBC) */
 static uint32_t au_phase;
 static const int16_t SINQ[65] = {0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793, 12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403, 22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683, 28105, 28510, 28898, 29268, 29621, 29956, 30273, 30571, 30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285, 32412, 32521, 32609, 32678, 32728, 32757, 32767};
@@ -630,7 +632,9 @@ static void audio_service(void)
     }
     au_halves++;
     t0 = fm1_ticks();
-    h = ((ALNK_CON0 >> 15) & 1u) ^ 1u;            /* the half both DMAs just left */
+    au_b15[(ALNK_CON0 >> 15) & 1u]++;
+    h = au_h;                                     /* v0.7.1 used CON0 bit 15 here: one half never got written */
+    au_h ^= 1u;
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
     g = au_gain;
@@ -879,7 +883,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
         uint32_t st[8], k;
         ota_frame_done();
         st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = au_clip_in;
-        st[4] = au_clip_out; st[5] = au_us_max; st[6] = au_gain; st[7] = au_route | (uint32_t)au_fmt << 8 | (uint32_t)au_tone << 16;
+        st[4] = au_clip_out; st[5] = au_us_max; st[6] = au_b15[0]; st[7] = au_b15[1];
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
         k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
         msg[k++] = 0xF7;
