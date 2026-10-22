@@ -10,16 +10,18 @@
  *    (back to the stock V20 included) can always be installed over USB.
  *  - Rescue: the official JieLi update loader is kept staged in flash at
  *    OTA_AREA. Two failed boots in a row (watchdog resets before 30 s of
- *    stable running, or a host that resets the bus but never configures us)
- *    start that loader through the SPL's RAM update record: it is a plain
- *    USB-MIDI updater that tools/bb_install.py talks to.
+ *    stable running) start that loader through the SPL's RAM update record:
+ *    it is a plain USB-MIDI updater that tools/bb_install.py talks to.
+ *    (v0.1 also counted "bus reset seen, never configured" as a failure: with
+ *    no cable the floating D+/D- read as bus resets, so on battery the pedal
+ *    went to the rescue loader after 30 s. Removed in v0.1.2.)
  *  - Never UBOOT (the mask-ROM mode needs extra hardware on a Mac).
  *
  * Built from Felucca (github.com/hugelton/Felucca, GPL-3.0): fw/felucca/ holds
  * the HAL, USB and update code we reuse. Single compilation unit. */
 #include <stdint.h>
 
-#define ARMARIA_VERSION "v0.1.1"
+#define ARMARIA_VERSION "v0.1.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -349,7 +351,7 @@ static void ota_commit(const uint8_t *parm);
 
 #define BOOTGUARD_MAGIC 0x41524D41u              /* "ARMA" */
 static struct {
-    uint32_t magic, pending, failed, rescues;
+    uint32_t magic, pending, failed, rescues, boots;
 } bootguard __attribute__((section(".noinit")));
 
 static void ota_show(uint32_t step, int32_t code)
@@ -448,6 +450,12 @@ static void armaria_main(void)
 
     lcd_init();                                   /* 2. the screen */
     lcd_splash();
+    str_cpy(line, "RST ?? BOOT ???? RESC ??", sizeof line);   /* diagnostics, 2 s */
+    hex(line + 4, fm1_boot.p3_rst, 2);
+    hex(line + 12, bootguard.boots, 4);
+    hex(line + 22, bootguard.rescues, 2);
+    status(line, C_TEXT);
+    delay_poll(2000);
     status("armaria-nam " ARMARIA_VERSION, C_TEXT);
 
     rescue_ok = flash_ok && (rescue_staged() || rescue_stage() == 0);   /* 3. the rescue loader */
@@ -472,15 +480,10 @@ static void armaria_main(void)
             shown = 0xFFu;
         }
         if (bootguard.pending && now - t_boot > 30000u) {
-            if (usb.resets && !usb.config && rescue_ok) {
-                status("USB FAILED: RESCUE", C_ERR);   /* a host is there but cannot use us */
-                delay_poll(1500);
-                rescue_enter();
-            }
             bootguard.pending = 0;                /* 30 s up: a good boot */
             bootguard.failed = 0;
         }
-        st = usb.config ? 2u : usb.up ? 1u : 0u;
+        st = usb.up && usb.config && !usb.suspended ? 2u : 1u;   /* suspended: bus idle, the cable is out */
         if (st != shown) {
             shown = st;
             status(st == 2u ? "armaria-nam " ARMARIA_VERSION "  USB OK" : "armaria-nam " ARMARIA_VERSION,
@@ -493,6 +496,7 @@ void fm1_cstart(void)
 {
     uint32_t *s, *d;
     fm1_time_init();
+    fm1_reset_reason();                           /* before the watchdog is re-armed (shown at boot) */
     fm1_wdt_arm(0x0D);                            /* ~8 s; fed by poll() */
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
@@ -507,7 +511,9 @@ void fm1_cstart(void)
         bootguard.pending = 0;
         bootguard.failed = 0;
         bootguard.rescues = 0;
+        bootguard.boots = 0;
     }
+    bootguard.boots++;
     if (bootguard.pending)
         bootguard.failed++;
     bootguard.pending = 1;

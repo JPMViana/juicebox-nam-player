@@ -4,7 +4,22 @@ Nome provisório: **armaria-nam**. Identidade no protocolo de update: `BlackBox_
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
-## v0.1.1 (2026-10-22) — gravado e rodando
+## v0.1.2 (2026-10-22) — gravado e rodando
+
+Incidente da v0.1.1: indicador "USB OK" não sumia ao desconectar e, ligado só na
+bateria, o pedal ficava de tela preta. Causa (minha): a regra extra de resgate
+"barramento resetado mas nunca configurado em 30 s". Sem cabo, as linhas D+/D-
+soltas são lidas como reset de barramento → após 30 s o firmware entrava no
+carregador de resgate (que não usa a tela). O pedal foi encontrado no carregador
+(`ota-?`) e a v0.1.2 foi instalada por ele: **o resgate funcionou como projetado**.
+
+- Regra removida: resgate só por dois resets de watchdog seguidos.
+- Indicador USB: `config && !suspended` (barramento parado = cabo fora).
+- Linha de diagnóstico por 2 s no boot: `RST` (motivo do reset, registro P33),
+  `BOOT` (boots desde a última energização fria), `RESC` (entradas no resgate).
+- Identidade `BlackBox_903`.
+
+## v0.1.1 (2026-10-22)
 
 - Tela: área visível nas linhas 0..239 do controlador (a v0.1 usava 40..279); limpa
   toda a RAM do controlador (240×320) antes da imagem, para não sobrar nada da UI de fábrica.
