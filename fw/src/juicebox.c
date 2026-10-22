@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.7"
+#define JB_VERSION "v0.7.1"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_914"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_915"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_914"
+#define OTA_LOADER_ID "ota-BlackBox_915"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -529,6 +529,7 @@ static volatile uint8_t snap_req, snap_ready, snap_trig;
 static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
 /* v0.7 output diagnostics: MOD = guitar / 440 Hz test tone; AMP = the DAC word format */
 static volatile uint8_t au_tone, au_fmt;
+static volatile int32_t au_gain_force = -1;      /* >= 0: USB-set Q16 gain overrides MASTER (JBC) */
 static uint32_t au_phase;
 static const int16_t SINQ[65] = {0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793, 12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403, 22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683, 28105, 28510, 28898, 29268, 29621, 29956, 30273, 30571, 30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285, 32412, 32521, 32609, 32678, 32728, 32757, 32767};
 #define N_FMT 5u
@@ -866,6 +867,13 @@ static void debug_service(void)                   /* our SysEx; anything else st
         ota_frame_done();
         snap_ready = 0;
         snap_trig = 1;                            /* the first half above -18 dBFS */
+    } else if (n == 8u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'C') {
+        /* remote control: F0 7D 'J' 'B' 'C' fmt tone gain_hi gain_lo F7 (gain 14 bits, Q14; 0x3FFF = MASTER) */
+        uint32_t gq = (uint32_t)p[6] << 7 | p[7];
+        ota_frame_done();
+        au_fmt = (uint8_t)(p[4] % N_FMT);
+        au_tone = (uint8_t)(p[5] & 1u);
+        au_gain_force = gq == 0x3FFFu ? -1 : (int32_t)(gq << 2);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'S') {
         static uint8_t msg[64];
         uint32_t st[8], k;
@@ -1074,7 +1082,9 @@ static void jb_main(void)
                         changed = 1;
                 }
             }
-            if (a[0] >= 0) {                      /* MASTER (PA10) -> output gain, squared curve, 0..1.0 */
+            if (au_gain_force >= 0)
+                au_gain = (uint32_t)au_gain_force;
+            else if (a[0] >= 0) {                 /* MASTER (PA10) -> output gain, squared curve, 0..1.0 */
                 uint32_t v = (uint32_t)a[0];
                 au_gain = v * v * 65536u / (1023u * 1023u);
             }
