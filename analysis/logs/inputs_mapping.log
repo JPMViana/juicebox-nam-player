@@ -1,0 +1,198 @@
+  20.064  pressed: PA1                          PA10=   0  PC10=1023  PC9= 612
+  20.458  pressed: -                            PA10=   0  PC10=1023  PC9= 611
+  23.981  pressed: PA0                          PA10=   0  PC10=1023  PC9= 611
+  24.493  pressed: -                            PA10=   0  PC10=1023  PC9= 612
+  27.073  pressed: PH9                          PA10=   0  PC10=1023  PC9= 611
+  27.506  pressed: -                            PA10=   0  PC10=1023  PC9= 611
+  30.027  pressed: PH8                          PA10=   0  PC10=1023  PC9= 612
+  30.316  pressed: -                            PA10=   0  PC10=1023  PC9= 612
+  32.734  pressed: -                            PA10=   0  PC10= 706  PC9= 611
+  33.047  pressed: -                            PA10=   0  PC10=1023  PC9= 611
+  35.357  pressed: -                            PA10=   0  PC10= 787  PC9= 611
+  35.642  pressed: -                            PA10=   0  PC10=1023  PC9= 611
+  37.833  pressed: -                            PA10=   0  PC10= 616  PC9= 612
+  38.117  pressed: -                            PA10=   0  PC10=1023  PC9= 612
+  47.850  pressed: PA3                          PA10=   0  PC10=1023  PC9= 612
+  48.391  pressed: -                            PA10=   0  PC10=1023  PC9= 611
+  52.239  pressed: PA2                          PA10=   0  PC10=1023  PC9= 611
+  52.681  pressed: -                            PA10=   0  PC10=1023  PC9= 612
+  54.405  pressed: PA3 PA2                      PA10=   0  PC10=1023  PC9= 612
+  55.346  pressed: -                            PA10=   0  PC10=1023  PC9= 611
+  65.026  pressed: -                            PA10=  10  PC10=1023  PC9= 612
+  65.055  pressed: -                            PA10=  17  PC10=1023  PC9= 612
+  65.085  pressed: -                            PA10=  24  PC10=1023  PC9= 612
+  65.115  pressed: -                            PA10=  31  PC10=1023  PC9= 612
+  65.146  pressed: -                            PA10=  38  PC10=1023  PC9= 611
+  65.176  pressed: -                            PA10=  46  PC10=1023  PC9= 612
+  65.265  pressed: -                            PA10=  55  PC10=1023  PC9= 612
+  65.310  pressed: -                            PA10=  64  PC10=1023  PC9= 612
+  65.520  pressed: -                            PA10=  57  PC10=1023  PC9= 612
+  65.550  pressed: -                            PA10=  50  PC10=1023  PC9= 612
+  65.595  pressed: -                            PA10=  39  PC10=1023  PC9= 612
+  65.625  pressed: -                            PA10=  28  PC10=1023  PC9= 612
+  65.655  pressed: -                            PA10=  19  PC10=1023  PC9= 612
+  65.700  pressed: -                            PA10=  12  PC10=1023  PC9= 612
+  65.730  pressed: -                            PA10=   4  PC10=1023  PC9= 612
+  66.825  pressed: -                            PA10=  11  PC10=1023  PC9= 612
+  66.870  pressed: -                            PA10=  23  PC10=1023  PC9= 612
+  66.901  pressed: -                            PA10=  31  PC10=1023  PC9= 611
+  66.946  pressed: -                            PA10=  39  PC10=1023  PC9= 612
+  66.975  pressed: -                            PA10=  46  PC10=1023  PC9= 612
+  67.035  pressed: -                            PA10=  54  PC10=1023  PC9= 612
+  67.095  pressed: -                            PA10=  63  PC10=1023  PC9= 612
+  67.140  pressed: -                            PA10=  72  PC10=1023  PC9= 612
+  67.201  pressed: -                            PA10=  80  PC10=1023  PC9= 611
+  67.231  pressed: -                            PA10=  87  PC10=1023  PC9= 612
+  67.276  pressed: -                            PA10=  95  PC10=1023  PC9= 611
+  67.320  pressed: -                            PA10= 103  PC10=1023  PC9= 611
+  67.380  pressed: -                            PA10= 110  PC10=1023  PC9= 611
+  67.439  pressed: -                            PA10= 118  PC10=1023  PC9= 611
+  67.486  pressed: -                            PA10= 125  PC10=1023  PC9= 612
+  67.515  pressed: -                            PA10= 132  PC10=1023  PC9= 612
+  67.560  pressed: -                            PA10= 142  PC10=1023  PC9= 612
+  67.605  pressed: -                            PA10= 153  PC10=1023  PC9= 612
+  67.649  pressed: -                            PA10= 161  PC10=1023  PC9= 612
+  67.680  pressed: -                            PA10= 170  PC10=1023  PC9= 612
+  67.724  pressed: -                            PA10= 180  PC10=1023  PC9= 612
+  67.754  pressed: -                            PA10= 187  PC10=1023  PC9= 612
+  67.799  pressed: -                            PA10= 199  PC10=1023  PC9= 612
+  67.831  pressed: -                            PA10= 208  PC10=1023  PC9= 611
+  67.861  pressed: -                            PA10= 216  PC10=1023  PC9= 612
+  67.891  pressed: -                            PA10= 223  PC10=1023  PC9= 611
+  67.919  pressed: -                            PA10= 232  PC10=1023  PC9= 611
+  67.951  pressed: -                            PA10= 239  PC10=1023  PC9= 612
+  67.981  pressed: -                            PA10= 250  PC10=1023  PC9= 611
+  68.009  pressed: -                            PA10= 258  PC10=1023  PC9= 611
+  68.039  pressed: -                            PA10= 266  PC10=1023  PC9= 611
+  68.071  pressed: -                            PA10= 273  PC10=1023  PC9= 612
+  68.101  pressed: -                            PA10= 280  PC10=1023  PC9= 611
+  68.131  pressed: -                            PA10= 287  PC10=1023  PC9= 612
+  68.159  pressed: -                            PA10= 295  PC10=1023  PC9= 612
+  68.189  pressed: -                            PA10= 305  PC10=1023  PC9= 612
+  68.219  pressed: -                            PA10= 312  PC10=1023  PC9= 612
+  68.249  pressed: -                            PA10= 320  PC10=1023  PC9= 612
+  68.279  pressed: -                            PA10= 327  PC10=1023  PC9= 612
+  68.324  pressed: -                            PA10= 339  PC10=1023  PC9= 612
+  68.355  pressed: -                            PA10= 351  PC10=1023  PC9= 611
+  68.385  pressed: -                            PA10= 360  PC10=1023  PC9= 612
+  68.414  pressed: -                            PA10= 368  PC10=1023  PC9= 612
+  68.444  pressed: -                            PA10= 377  PC10=1023  PC9= 612
+  68.474  pressed: -                            PA10= 385  PC10=1023  PC9= 612
+  68.504  pressed: -                            PA10= 397  PC10=1023  PC9= 612
+  68.535  pressed: -                            PA10= 406  PC10=1023  PC9= 611
+  68.565  pressed: -                            PA10= 418  PC10=1023  PC9= 612
+  68.594  pressed: -                            PA10= 430  PC10=1023  PC9= 612
+  68.625  pressed: -                            PA10= 442  PC10=1023  PC9= 611
+  68.655  pressed: -                            PA10= 455  PC10=1023  PC9= 612
+  68.685  pressed: -                            PA10= 466  PC10=1023  PC9= 611
+  68.700  pressed: -                            PA10= 473  PC10=1023  PC9= 612
+  68.715  pressed: -                            PA10= 480  PC10=1023  PC9= 611
+  68.746  pressed: -                            PA10= 491  PC10=1023  PC9= 612
+  68.775  pressed: -                            PA10= 499  PC10=1023  PC9= 611
+  68.804  pressed: -                            PA10= 508  PC10=1023  PC9= 611
+  68.834  pressed: -                            PA10= 517  PC10=1023  PC9= 611
+  68.881  pressed: -                            PA10= 529  PC10=1023  PC9= 612
+  68.910  pressed: -                            PA10= 536  PC10=1023  PC9= 611
+  68.954  pressed: -                            PA10= 544  PC10=1023  PC9= 611
+  68.999  pressed: -                            PA10= 554  PC10=1023  PC9= 611
+  69.045  pressed: -                            PA10= 565  PC10=1023  PC9= 612
+  69.074  pressed: -                            PA10= 574  PC10=1023  PC9= 612
+  69.106  pressed: -                            PA10= 583  PC10=1023  PC9= 611
+  69.134  pressed: -                            PA10= 595  PC10=1023  PC9= 611
+  69.165  pressed: -                            PA10= 603  PC10=1023  PC9= 612
+  69.194  pressed: -                            PA10= 614  PC10=1023  PC9= 612
+  69.224  pressed: -                            PA10= 623  PC10=1023  PC9= 612
+  69.254  pressed: -                            PA10= 634  PC10=1023  PC9= 612
+  69.284  pressed: -                            PA10= 643  PC10=1023  PC9= 612
+  69.314  pressed: -                            PA10= 651  PC10=1023  PC9= 612
+  69.360  pressed: -                            PA10= 659  PC10=1023  PC9= 611
+  69.389  pressed: -                            PA10= 666  PC10=1023  PC9= 611
+  69.436  pressed: -                            PA10= 673  PC10=1023  PC9= 612
+  69.465  pressed: -                            PA10= 680  PC10=1023  PC9= 611
+  69.479  pressed: -                            PA10= 687  PC10=1023  PC9= 611
+  69.510  pressed: -                            PA10= 695  PC10=1023  PC9= 612
+  69.539  pressed: -                            PA10= 703  PC10=1023  PC9= 612
+  69.554  pressed: -                            PA10= 710  PC10=1023  PC9= 612
+  69.584  pressed: -                            PA10= 717  PC10=1023  PC9= 612
+  69.616  pressed: -                            PA10= 725  PC10=1023  PC9= 611
+  69.645  pressed: -                            PA10= 735  PC10=1023  PC9= 612
+  69.689  pressed: -                            PA10= 745  PC10=1023  PC9= 612
+  69.719  pressed: -                            PA10= 752  PC10=1023  PC9= 612
+  69.749  pressed: -                            PA10= 759  PC10=1023  PC9= 612
+  69.795  pressed: -                            PA10= 767  PC10=1023  PC9= 611
+  69.855  pressed: -                            PA10= 774  PC10=1023  PC9= 612
+  69.914  pressed: -                            PA10= 783  PC10=1023  PC9= 612
+  69.989  pressed: -                            PA10= 790  PC10=1023  PC9= 612
+  70.065  pressed: -                            PA10= 800  PC10=1023  PC9= 611
+  70.110  pressed: -                            PA10= 809  PC10=1023  PC9= 612
+  70.154  pressed: -                            PA10= 816  PC10=1023  PC9= 612
+  70.199  pressed: -                            PA10= 823  PC10=1023  PC9= 612
+  70.244  pressed: -                            PA10= 834  PC10=1023  PC9= 612
+  70.290  pressed: -                            PA10= 841  PC10=1023  PC9= 611
+  70.335  pressed: -                            PA10= 850  PC10=1023  PC9= 612
+  70.365  pressed: -                            PA10= 857  PC10=1023  PC9= 611
+  70.394  pressed: -                            PA10= 864  PC10=1023  PC9= 611
+  70.424  pressed: -                            PA10= 871  PC10=1023  PC9= 611
+  70.470  pressed: -                            PA10= 883  PC10=1023  PC9= 612
+  70.499  pressed: -                            PA10= 890  PC10=1023  PC9= 612
+  70.529  pressed: -                            PA10= 899  PC10=1023  PC9= 612
+  70.559  pressed: -                            PA10= 910  PC10=1023  PC9= 612
+  70.604  pressed: -                            PA10= 920  PC10=1023  PC9= 612
+  70.634  pressed: -                            PA10= 928  PC10=1023  PC9= 612
+  70.664  pressed: -                            PA10= 936  PC10=1023  PC9= 612
+  70.710  pressed: -                            PA10= 945  PC10=1023  PC9= 611
+  70.770  pressed: -                            PA10= 956  PC10=1023  PC9= 612
+  70.814  pressed: -                            PA10= 963  PC10=1023  PC9= 612
+  70.874  pressed: -                            PA10= 971  PC10=1023  PC9= 612
+  70.904  pressed: -                            PA10= 978  PC10=1023  PC9= 612
+  70.934  pressed: -                            PA10= 986  PC10=1023  PC9= 612
+  70.965  pressed: -                            PA10= 993  PC10=1023  PC9= 611
+  71.010  pressed: -                            PA10=1003  PC10=1023  PC9= 612
+  71.054  pressed: -                            PA10=1011  PC10=1023  PC9= 612
+  71.115  pressed: -                            PA10=1018  PC10=1023  PC9= 611
+  81.300  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  81.363  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 611
+  81.404  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  81.422  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  82.142  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  82.207  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  82.223  pressed: PC0                          PA10=1023  PC10=1023  PC9= 611
+  82.238  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  82.867  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  82.997  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  83.016  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  83.037  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  83.626  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  83.671  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  83.701  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  83.721  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  84.537  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  84.593  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 611
+  84.627  pressed: PC0                          PA10=1023  PC10=1023  PC9= 611
+  84.646  pressed: -                            PA10=1023  PC10=1023  PC9= 611
+  87.628  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  87.741  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  87.807  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  87.826  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  88.626  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  88.671  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  88.692  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  88.701  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  89.401  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  89.487  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  89.511  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  89.526  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  90.432  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  90.501  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  90.521  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  90.531  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  91.536  pressed: PC0                          PA10=1023  PC10=1023  PC9= 612
+  91.626  pressed: PC1 PC0                      PA10=1023  PC10=1023  PC9= 612
+  91.646  pressed: PC1                          PA10=1023  PC10=1023  PC9= 612
+  91.656  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  94.541  pressed: PH6                          PA10=1023  PC10=1023  PC9= 612
+  94.802  pressed: -                            PA10=1023  PC10=1023  PC9= 611
+  95.357  pressed: PH6                          PA10=1023  PC10=1023  PC9= 612
+  95.636  pressed: -                            PA10=1023  PC10=1023  PC9= 612
+  96.241  pressed: PH6                          PA10=1023  PC10=1023  PC9= 612
+  96.496  pressed: -                            PA10=1023  PC10=1023  PC9= 612

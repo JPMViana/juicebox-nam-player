@@ -106,9 +106,32 @@ chip). **A entrada (ADC) é o ponto novo**: precisamos rastrear as escritas em
 `ADC_CON` e `JL_ANA` do app de fábrica (`0x0204B06C`, `0x0204B85A`) e replicá-las.
 A especificação de 105 dB de faixa dinâmica é do fabricante, não foi medida.
 
+## Controles do painel — **mapeados no pedal** (Juice-Box v0.3, 2026-10-22)
+
+Configuração lida do V20 (`0x020061C0`) e confirmada pressionando cada controle
+(`tools/jb_inputs.py`, log em `analysis/logs/inputs_mapping.log`).
+
+| Controle | Entrada | Leitura |
+|---|---|---|
+| HOME | **PA1** | digital, pull-up, 0 = pressionado |
+| FX | **PA0** | digital |
+| AMP | **PH9** | digital |
+| MOD | **PH8** | digital |
+| DLY | **PC10** (SARADC ch 9) | escada de resistores: ~706 (repouso 1023) |
+| REV | **PC10** | ~787 |
+| CAB | **PC10** | ~616 |
+| Footswitch esquerdo (▼) | **PA3** | digital |
+| Footswitch direito (▲) | **PA2** | digital (os dois juntos = afinador no V20) |
+| MASTER (knob esquerdo) | **PA10** (SARADC ch 2) | potenciômetro 0..1023 |
+| PARA (knob direito), giro | **PC1 / PC0** | encoder em quadratura: 4 transições por detente; horário = PC1 lidera |
+| PARA, clique | **PH6** | digital |
+| ? | **PC9** (SARADC ch 8) | constante ~611: provavelmente divisor da bateria — a confirmar |
+
+Limiares sugeridos para a escada do PC10: < 661 = CAB, < 746 = DLY, < 905 = REV.
+
 ## Próximos alvos
 
 - [ ] Áudio: rastrear init do ADC (`ADC_CON`, `JL_ANA`), canal line-in, taxa, DMA
-- [ ] Footswitches e encoders/botões (GPIO ou SARADC)
+- [x] Footswitches, botões e knobs (tabela acima)
 - [ ] PC7 e backlight; LEDs
 - [ ] Bateria/carga (`JL_P33`, SARADC)
