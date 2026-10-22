@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.5.2"
+#define JB_VERSION "v0.6"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_912"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_913"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_912"
+#define OTA_LOADER_ID "ota-BlackBox_913"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -75,10 +75,14 @@ static uint32_t now_ms(void)                    /* monotonic; survives the TIMER
 }
 
 static void audio_service(void);
+static void led_pwm_tick(void);
+static uint8_t led_on;
 
-static void poll(void)                          /* watchdog, USB at ~2 kHz, audio halves */
+static void poll(void)                          /* watchdog, USB at ~2 kHz, audio halves, LED PWM */
 {
     audio_service();
+    if (led_on)
+        led_pwm_tick();
     static uint32_t last;
     uint32_t now = fm1_ticks();
     fm1_wdt_feed();
@@ -463,13 +467,28 @@ static void led_write(uint8_t v)
             PORT_REG(P_C, R_OUT) |= 1u << 8;
         else
             PORT_REG(P_C, R_OUT) &= ~(1u << 8);
-        fm1_delay_us(2);
-        PORT_REG(P_C, R_OUT) |= 1u << 5;
-        fm1_delay_us(2);
+        PORT_REG(P_C, R_OUT) |= 1u << 5;          /* (an SFR write takes far longer than the 595's 20 ns) */
         PORT_REG(P_C, R_OUT) &= ~(1u << 5);
     }
-    fm1_delay_us(2);
     PORT_REG(P_C, R_OUT) |= 1u << 6;              /* latch */
+}
+
+/* Software PWM: 16 levels per LED, one level step per led_pwm_tick() (from poll(), every 200 us:
+ * a 3.2 ms frame, ~310 Hz). The LEDs are active low: a 0 bit lights. */
+static volatile uint8_t led_bri[8];
+static void led_pwm_tick(void)
+{
+    static uint32_t last, sub;
+    uint32_t now = fm1_ticks(), k;
+    uint8_t v = 0;
+    if (now - last < 200u * FM1_TICKS_PER_US)
+        return;
+    last = now;
+    sub = (sub + 1u) & 15u;
+    for (k = 0; k < 8u; k++)
+        if (led_bri[k] > sub)
+            v |= (uint8_t)(1u << k);
+    led_write((uint8_t)~v);
 }
 
 static void led_init(void)
@@ -477,7 +496,7 @@ static void led_init(void)
     uint32_t m = (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8);
     PORT_REG(P_C, R_OUT) &= ~((1u << 5) | (1u << 6) | (1u << 7) | (1u << 8));
     PORT_REG(P_C, R_DIR) &= ~m;
-    led_write(0);
+    led_write(0xFFu);                             /* all off */
 }
 
 /* ----------------------------------------------------------------- audio --- */
@@ -506,7 +525,8 @@ static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MA
 static uint32_t au_peak[2];                       /* |input| peak per channel since the last read */
 static uint32_t au_halves, au_late;
 static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (default: the guitar is on L), 2 R */
-static volatile uint8_t snap_req, snap_ready;
+static volatile uint8_t snap_req, snap_ready, snap_trig;
+static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
 static int32_t snap_buf[AU_HALF] __attribute__((aligned(4)));
 
 static void pa_out(uint32_t pin, uint32_t v)      /* gpio_direction_output */
@@ -577,21 +597,35 @@ static void audio_stop(void)
 static void audio_service(void)
 {
     uint8_t p;
-    uint32_t h, i, g;
+    uint32_t h, i, g, t0, us;
     int32_t *in, *out;
     if (!au_on)
         return;
     p = ALNK_CON2;
-    if (!(p & 0x10u))                             /* channel 0 (TX) half not done yet */
+    if ((p & 0x30u) != 0x30u) {                   /* both the TX and the RX half must be done */
+        if (p & 0x30u)
+            au_late++;                            /* (counts polls that saw only one of them) */
         return;
-    if ((p & 0x30u) == 0x30u)
-        au_halves++;
-    else
-        au_late++;
+    }
+    au_halves++;
+    t0 = fm1_ticks();
     h = ((ALNK_CON0 >> 15) & 1u) ^ 1u;            /* the half both DMAs just left */
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
     g = au_gain;
+    if (snap_trig && !snap_ready) {               /* armed: capture the first loud half */
+        uint32_t pk = 0;
+        for (i = 0; i < AU_HALF; i += 2u) {
+            int32_t x = (int32_t)((uint32_t)in[i] << 8) >> 8;
+            uint32_t ax = (uint32_t)(x < 0 ? -x : x);
+            if (ax > pk)
+                pk = ax;
+        }
+        if (pk > (1u << 20)) {                    /* > -18 dBFS */
+            snap_trig = 0;
+            snap_req = 1;
+        }
+    }
     if (snap_req && !snap_ready) {                /* raw input words for tools/jb_audio.py */
         for (i = 0; i < AU_HALF; i++)
             snap_buf[i] = in[i];
@@ -605,13 +639,24 @@ static void audio_service(void)
         uint32_t ax = (uint32_t)(x < 0 ? -x : x);
         if (ax > au_peak[i & 1u])
             au_peak[i & 1u] = ax;
-        if (y > 0x7FFFFF)
+        if (ax > au_in_max)
+            au_in_max = ax;
+        if (ax >= 0x7FF000u)
+            au_clip_in++;
+        if (y > 0x7FFFFF) {
             y = 0x7FFFFF;
-        if (y < -0x800000)
+            au_clip_out++;
+        }
+        if (y < -0x800000) {
             y = -0x800000;
+            au_clip_out++;
+        }
         out[i] = (int32_t)((uint32_t)y << 8);     /* 24-bit, left-justified for the DAC */
     }
     ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
+    us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+    if (us > au_us_max)
+        au_us_max = us;
 }
 
 /* ----------------------------------------------------------------- flash --- */
@@ -785,6 +830,20 @@ static void debug_service(void)                   /* our SysEx; anything else st
         ota_frame_done();
         snap_ready = 0;
         snap_req = 1;                             /* the next input half; sent from the main loop */
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'T') {
+        ota_frame_done();
+        snap_ready = 0;
+        snap_trig = 1;                            /* the first half above -18 dBFS */
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'S') {
+        static uint8_t msg[64];
+        uint32_t st[8], k;
+        ota_frame_done();
+        st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = au_clip_in;
+        st[4] = au_clip_out; st[5] = au_us_max; st[6] = au_gain; st[7] = au_route;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
+        k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
     }
 }
 
@@ -904,6 +963,7 @@ static void jb_main(void)
     delay_poll(1500);                             /* the splash, a moment */
     test_screen();
     led_init();
+    led_on = 1;
     audio_start();
     STAGE(9);
     {
@@ -943,9 +1003,12 @@ static void jb_main(void)
             snap_send();
             snap_ready = 0;
         }
-        if (now - t_led >= 110u) {                /* LED ping-pong */
+        if (now - t_led >= 70u) {                 /* LED ping-pong: a lit ball with a fading trail */
+            uint32_t k;
             t_led = now;
-            led_write((uint8_t)(1u << led_pos));
+            for (k = 0; k < 8u; k++)
+                led_bri[k] = (uint8_t)(led_bri[k] * 9u / 16u);
+            led_bri[led_pos] = 16;
             if (led_pos + led_dir < 0 || led_pos + led_dir > 7)
                 led_dir = -led_dir;
             led_pos += led_dir;
