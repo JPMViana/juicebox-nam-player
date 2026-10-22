@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * armaria-nam v0.1 for the M-VAVE ANN BlackBox (JieLi AC791N).
+ * Juice-Box by João Viana: NAM player firmware for the M-VAVE ANN BlackBox (JieLi AC791N).
+ * (Working name until v0.1.2: armaria-nam.)
  *
  * First own firmware: USB-MIDI with the M-UPGRADE update entry first, then the
  * screen with the boot image. No audio, no inputs yet. Interrupts stay off:
@@ -21,7 +22,8 @@
  * the HAL, USB and update code we reuse. Single compilation unit. */
 #include <stdint.h>
 
-#define ARMARIA_VERSION "v0.1.2"
+#define JB_NAME "Juice-Box"
+#define JB_VERSION "v0.2.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -31,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_901"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_906"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -41,18 +43,19 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_901"
+#define OTA_LOADER_ID "ota-BlackBox_906"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
-#define FL_RANGE_OK(off, n) FL_IN(off, n, OTA_AREA, OTA_AREA + OTA_AREA_LEN)
+#define JB_LOG 0x000B9000u                       /* boot log sector, just below the staged loader */
+#define FL_RANGE_OK(off, n) FL_IN(off, n, JB_LOG, OTA_AREA + OTA_AREA_LEN)
 #include "fm1_flash.h"
 #include "libc.c"
 
 #define USB_STRINGS_DEFINED
-static const uint8_t STR1[] = {16, 3, 'a', 0, 'r', 0, 'm', 0, 'a', 0, 'r', 0, 'i', 0, 'a', 0};
-static const uint8_t STR2[] = {24, 3, 'a', 0, 'r', 0, 'm', 0, 'a', 0, 'r', 0, 'i', 0, 'a', 0, '-', 0,
-                               'n', 0, 'a', 0, 'm', 0};
+static const uint8_t STR1[] = {22, 3, 'J', 0, 'o', 0, 0xE3, 0, 'o', 0, ' ', 0, 'V', 0, 'i', 0, 'a', 0, 'n', 0,
+                               'a', 0};                               /* manufacturer: the author */
+static const uint8_t STR2[] = {20, 3, 'J', 0, 'u', 0, 'i', 0, 'c', 0, 'e', 0, '-', 0, 'B', 0, 'o', 0, 'x', 0};
 #include "usb.c"
 
 #include "splash.h"
@@ -354,6 +357,12 @@ static struct {
     uint32_t magic, pending, failed, rescues, boots;
 } bootguard __attribute__((section(".noinit")));
 
+/* where a boot got to (RAM that survives warm resets): logged by the next boot */
+static struct {
+    uint32_t magic, stage, ms, loops;
+} crumb __attribute__((section(".noinit")));
+#define STAGE(n) (crumb.stage = (n))
+
 static void ota_show(uint32_t step, int32_t code)
 {
     static const char *const STEP[] = {"", "UPDATE: PACKAGE", "UPDATE: HEAD", "UPDATE: LOADER", "UPDATE: CONFIRM",
@@ -377,6 +386,69 @@ static void ota_commit(const uint8_t *parm)
     usb_detach();
     fm1_delay_ms(30);
     fm1_enter_update(parm);                       /* RAM record + core reset: the SPL runs the staged loader */
+}
+
+/* -------------------------------------------------------------- boot log --- */
+/* 32-byte records in the JB_LOG sector (erased when full): what each boot found. Read over USB
+ * with tools/jb_log.py (SysEx F0 7D 'J' 'B' 'L' F7). */
+#define LOG_MAGIC 0x474C424Au                     /* "JBLG" */
+static struct {
+    uint32_t magic, boots, prev_stage, prev_ms, prev_loops;
+    uint8_t p3_rst, wdt_con, failed, pending, rescues, warm, vers, pad;
+    uint32_t rst_src;
+} boot_rec;
+
+static void log_write(void)
+{
+    uint32_t off, w[8], i, blank;
+    for (off = 0; off < 0x1000u; off += 32u) {    /* records, then a fully blank slot; else (the stock VM's
+                                                   * leftovers in this sector, or full): erase */
+        if (fl_read(JB_LOG + off, w, 32))
+            return;
+        for (i = 0, blank = 1; i < 8u; i++)
+            blank &= w[i] == 0xFFFFFFFFu;
+        if (blank)
+            break;
+        if (w[0] != LOG_MAGIC) {
+            off = 0x1000u;
+            break;
+        }
+    }
+    if (off >= 0x1000u) {
+        if (fl_erase_sector(JB_LOG))
+            return;
+        off = 0;
+    }
+    fl_prog(JB_LOG + off, (const uint8_t *)&boot_rec, 32);
+}
+
+static void log_dump(void)                        /* every record as F0 7D 'J' 'B' 'L' idx pack7(32) F7 */
+{
+    static uint8_t rec[32], msg[64];
+    uint32_t off, n;
+    for (off = 0; off < 0x1000u; off += 32u) {
+        if (fl_read(JB_LOG + off, rec, 32) || (rec[0] == 0xFFu && rec[1] == 0xFFu))
+            break;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'L';
+        msg[5] = (uint8_t)(off / 32u);
+        n = 6u + ota_pack7(rec, 32, msg + 6);
+        msg[n++] = 0xF7;
+        ota_wire_send(msg, n);
+    }
+    msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'L'; msg[5] = 0x7F; msg[6] = 0xF7;
+    ota_wire_send(msg, 7);
+}
+
+static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
+{
+    const uint8_t *p;
+    uint32_t n;
+    if (!ota_frame_get(&p, &n))
+        return;
+    if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'L') {
+        ota_frame_done();
+        log_dump();
+    }
 }
 
 /* ---------------------------------------------------------------- rescue --- */
@@ -437,28 +509,36 @@ static void rescue_enter(void)                    /* never returns */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _rt_start[], _rt_end[], _rt_load[], _pool_start[], _pool_end[];
 
-static void armaria_main(void)
+static void jb_main(void)
 {
     char line[32];
     uint32_t t_boot, shown = 0xFFu, rescue_ok;
 
     usb_start();                                  /* 1. USB + update entry first */
+    STAGE(3);
     t_boot = now_ms();
     delay_poll(20);
     flash_id = FL_FAR(fl_jedec_ram)();
     flash_ok = (flash_id & 0xFFu) == 0x14u && (flash_id >> 16) != 0u && (flash_id >> 16) != 0xFFu;   /* a 1 MiB part */
+    STAGE(4);
+    if (flash_ok)
+        log_write();
+    STAGE(5);
 
     lcd_init();                                   /* 2. the screen */
+    STAGE(6);
     lcd_splash();
+    STAGE(7);
     str_cpy(line, "RST ?? BOOT ???? RESC ??", sizeof line);   /* diagnostics, 2 s */
     hex(line + 4, fm1_boot.p3_rst, 2);
     hex(line + 12, bootguard.boots, 4);
     hex(line + 22, bootguard.rescues, 2);
     status(line, C_TEXT);
     delay_poll(2000);
-    status("armaria-nam " ARMARIA_VERSION, C_TEXT);
+    status(JB_NAME " " JB_VERSION, C_TEXT);
 
     rescue_ok = flash_ok && (rescue_staged() || rescue_stage() == 0);   /* 3. the rescue loader */
+    STAGE(8);
     if (!rescue_ok) {
         str_cpy(line, "FLASH ?????? NO RESCUE", sizeof line);
         hex(line + 6, flash_id, 6);
@@ -466,9 +546,13 @@ static void armaria_main(void)
         delay_poll(3000);
     }
 
+    STAGE(9);
     for (;;) {
         uint32_t now = now_ms(), st;
+        crumb.ms = now;
+        crumb.loops++;
         poll();
+        debug_service();
         usb_retry(now);
         if (usb.uboot_req)                        /* the stock soft key: no UBOOT here (no Mac recovery) */
             usb.uboot_req = 0;
@@ -486,7 +570,7 @@ static void armaria_main(void)
         st = usb.up && usb.config && !usb.suspended ? 2u : 1u;   /* suspended: bus idle, the cable is out */
         if (st != shown) {
             shown = st;
-            status(st == 2u ? "armaria-nam " ARMARIA_VERSION "  USB OK" : "armaria-nam " ARMARIA_VERSION,
+            status(st == 2u ? JB_NAME " " JB_VERSION "  USB OK" : JB_NAME " " JB_VERSION,
                    st == 2u ? C_OK : C_TEXT);
         }
     }
@@ -506,7 +590,8 @@ void fm1_cstart(void)
         *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++)
         *d = *s;                                  /* flash driver: runs from RAM */
-    if (bootguard.magic != BOOTGUARD_MAGIC) {
+    if (bootguard.magic != BOOTGUARD_MAGIC || bootguard.boots > 100000u || bootguard.rescues > 1000u ||
+        bootguard.failed > 16u || bootguard.pending > 1u) {      /* (the update loaders use this RAM too) */
         bootguard.magic = BOOTGUARD_MAGIC;
         bootguard.pending = 0;
         bootguard.failed = 0;
@@ -514,8 +599,25 @@ void fm1_cstart(void)
         bootguard.boots = 0;
     }
     bootguard.boots++;
+    boot_rec.magic = LOG_MAGIC;
+    boot_rec.boots = bootguard.boots;
+    boot_rec.warm = crumb.magic == BOOTGUARD_MAGIC;
+    boot_rec.prev_stage = boot_rec.warm ? crumb.stage : 0;
+    boot_rec.prev_ms = boot_rec.warm ? crumb.ms : 0;
+    boot_rec.prev_loops = boot_rec.warm ? crumb.loops : 0;
+    boot_rec.p3_rst = fm1_boot.p3_rst;
+    boot_rec.wdt_con = fm1_boot.wdt_con;
+    boot_rec.rst_src = fm1_boot.rst_src;
+    boot_rec.pending = (uint8_t)bootguard.pending;
+    boot_rec.rescues = (uint8_t)bootguard.rescues;
+    boot_rec.vers = 0x20;
+    crumb.magic = BOOTGUARD_MAGIC;
+    crumb.stage = 2;
+    crumb.ms = 0;
+    crumb.loops = 0;
     if (bootguard.pending)
         bootguard.failed++;
+    boot_rec.failed = (uint8_t)bootguard.failed;
     bootguard.pending = 1;
     fm1_updata_parm_clear();                      /* no stale update record for the next warm reset */
     if (bootguard.failed >= 2u) {
@@ -523,5 +625,5 @@ void fm1_cstart(void)
         if (rescue_staged())
             rescue_enter();
     }
-    armaria_main();
+    jb_main();
 }

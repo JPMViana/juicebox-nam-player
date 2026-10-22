@@ -1,11 +1,13 @@
-# blackbox-nam
+# Juice-Box
+
+**Juice-Box** — firmware NAM para o M-VAVE ANN BlackBox, por **João Viana**.
 
 Firmware alternativo para o pedal **M-VAVE (Sinco) ANN BlackBox**, transformando-o
 em um **player de capturas NAM (Neural Amp Modeler) A2** para uso direto no
 power amp analógico (simulação de cabeçote, sem cab/IR obrigatório).
 
-> Status: **Fase 1 concluída** — gravação por USB no macOS comprovada, inclusive de app
-> modificado. Próximo: mapear o hardware no app de fábrica e o primeiro firmware próprio. Veja [docs/04-seguranca.md](docs/04-seguranca.md).
+> Status: **Juice-Box v0.2.2 rodando no pedal** (USB/update, tela com splash, resgate,
+> registro de boot). Em investigação: boot só na bateria cai no resgate. Próximo: entradas e áudio. Veja [docs/04-seguranca.md](docs/04-seguranca.md).
 
 ## Por que é viável (e onde não é)
 
@@ -24,7 +26,8 @@ Detalhes em [docs/02-viabilidade-nam.md](docs/02-viabilidade-nam.md).
 
 ```
 docs/        documentação técnica e roadmap
-tools/       nam_budget.py (custo de .nam), bb_install.py (update por USB-MIDI), bbpkg.py (empacotador .fwsc)
+tools/       nam_budget.py, bb_install.py (update USB-MIDI), bbpkg.py (.fwsc), jb_log.py (registro de boot)
+fw/          firmware Juice-Box (fw/build.py)
 nam/         código NAM embarcado (bench/ = kernels de teste pi32v2)
 scripts/     setup de referências e desempacotamento reproduzível
 firmware/    imagens de fábrica (NÃO versionadas – ver firmware/README.md)

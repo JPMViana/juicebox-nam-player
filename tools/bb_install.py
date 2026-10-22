@@ -42,7 +42,7 @@ LOADER_MARK = b"BBNAM-LOADER-1"
 STOCK_SHA256 = "c0fef191b860d3b20f77fc492a24986eef2d12df44bb5e38355684820e26cb08"
 DEVICE = "BlackBox"
 # port names are not confirmed on hardware yet; --port overrides. Never probe other gear.
-PORT_RE = re.compile(r"armaria|blackbox|black box|ann|sinco|m-vave|mvave|ota|composite|usb-midi|jieli", re.I)
+PORT_RE = re.compile(r"juice|armaria|blackbox|black box|ann|sinco|m-vave|mvave|ota|composite|usb-midi|jieli", re.I)
 
 # seconds; the tests shorten them
 DELAY = {"open": 0.3, "start": 2.0, "reply": 0.01, "loader": 3.0, "reboot": 3.0, "retry": 1.0,

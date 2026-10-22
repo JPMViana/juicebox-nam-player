@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build armaria-nam: app.bin and an installable BlackBox package (.fwsc).
+"""Build Juice-Box: app.bin and an installable BlackBox package (.fwsc).
 
   fw/build.py [--product BlackBox_901] [--bump-cfg]
 
 Needs: Docker, the JieLi toolchain in .toolchain/toolchain (scripts/pi32cc.sh),
 the stock package unpacked in analysis/v20_pkg (tools/bbpkg.py unpack: its head,
 cfg and the official update loader go into our package and our rescue copy).
-Outputs in build/fw/: armaria.elf / .dis / .map-like symbol list, app.bin, armaria-<product>.fwsc.
+Outputs in build/fw/: juicebox.elf / .dis / .map-like symbol list, app.bin, juicebox-<product>.fwsc.
 """
 import argparse
 import re
@@ -40,7 +40,7 @@ def rel(p):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--product", default="BlackBox_901")
+    ap.add_argument("--product", default="BlackBox_904")
     ap.add_argument("--bump-cfg", action="store_true", help="see tools/bbpkg.py")
     a = ap.parse_args()
     if not (PKG / "manifest.json").exists():
@@ -51,17 +51,17 @@ def main():
                     "--png", OUT / "splash_preview.png"], check=True)
 
     inc = ["-I", rel(FW / "felucca" / "hal"), "-I", rel(FW / "felucca" / "src"), "-I", rel(gen)]
-    tc("clang", *CFLAGS, *inc, f'-DFELUCCA_ID="{a.product}"', "-c", rel(FW / "src" / "armaria.c"),
-       "-o", rel(OUT / "armaria.o"))
+    tc("clang", *CFLAGS, *inc, f'-DFELUCCA_ID="{a.product}"', "-c", rel(FW / "src" / "juicebox.c"),
+       "-o", rel(OUT / "juicebox.o"))
     tc("clang", "-c", rel(FW / "felucca" / "crt0.S"), "-o", rel(OUT / "crt0.o"))
-    elf = OUT / "armaria.elf"
-    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "armaria.o"), "-o", rel(elf))
+    elf = OUT / "juicebox.elf"
+    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "juicebox.o"), "-o", rel(elf))
     for sect, name in ((".text", "text.bin"), (".ram_text", "ramtext.bin"), (".data", "data.bin")):
         (OUT / name).unlink(missing_ok=True)
         tc("common/bin/objcopy", "-O", "binary", "-j", sect, rel(elf), rel(OUT / name))
     syms = tc("common/bin/objdump", "-t", rel(elf))
-    (OUT / "armaria.syms").write_text(syms)
-    (OUT / "armaria.dis").write_text(tc("common/bin/objdump", "-d", rel(elf)))
+    (OUT / "juicebox.syms").write_text(syms)
+    (OUT / "juicebox.dis").write_text(tc("common/bin/objdump", "-d", rel(elf)))
 
     def symv(name):
         m = re.search(r"^([0-9a-f]+) .*\s" + re.escape(name) + r"$", syms, re.M)
@@ -90,7 +90,7 @@ def main():
     print(f"app: {used} B used of {APP_SLOT} ({used * 100 // APP_SLOT} %), .ram_text {rt} B, "
           f"bss end {symv('_bss_end'):#x}")
 
-    pkg = OUT / f"armaria-{a.product}.fwsc"
+    pkg = OUT / f"juicebox-{a.product}.fwsc"
     cmd = [sys.executable, "-I", ROOT / "tools" / "bbpkg.py", "build", PKG, pkg, "--app", app, "--product", a.product]
     if a.bump_cfg:
         cmd.append("--bump-cfg")

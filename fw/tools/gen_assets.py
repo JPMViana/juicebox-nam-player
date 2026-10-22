@@ -30,34 +30,59 @@ def font(size, weight):
 
 
 def splash():
-    img = Image.new("RGB", (W, H), (14, 14, 16))
+    """Juice-Box: a glass jug of orange juice, the name, the author"""
+    S = 4                                            # supersampled, then reduced: smooth edges
+    big = Image.new("RGB", (W * S, H * S), (14, 14, 16))
+    d = ImageDraw.Draw(big)
+
+    def R(*v):
+        return tuple(int(x * S) for x in v)
+
+    glass, rim = (120, 140, 150), (190, 210, 220)
+    jx0, jy0, jx1, jy1 = 82, 22, 150, 118           # jug body
+    # juice: a vertical gradient inside the body, below the surface line
+    for y in range(52 * S, jy1 * S - 6 * S):
+        t = min(1.0, max(0.0, (y - 52 * S) / ((jy1 - 6) * S - 52 * S)))
+        c = (255, int(190 - 50 * t), int(50 - 35 * t))
+        d.line((jx0 * S + 5 * S, y, jx1 * S - 5 * S, y), fill=c)
+    d.rounded_rectangle(R(jx0 + 5, jy1 - 18, jx1 - 5, jy1 - 4), radius=10 * S, fill=(255, 140, 15))
+    d.ellipse(R(jx0 + 5, 47, jx1 - 5, 57), fill=(255, 214, 90))          # the surface
+    # glass outline, spout, handle
+    d.rounded_rectangle(R(jx0, jy0, jx1, jy1), radius=12 * S, outline=glass, width=3 * S)
+    d.polygon(R(jx0, jy0 + 2, jx0 - 10, jy0 - 6, jx0 + 8, jy0), fill=glass)
+    d.arc(R(jx1 - 8, 40, jx1 + 26, 96), 280, 80, fill=glass, width=5 * S)
+    d.line(R(jx0 + 2, jy0, jx1 - 2, jy0), fill=rim, width=3 * S)
+    d.line(R(jx0 + 12, 30, jx0 + 12, 104), fill=(230, 240, 245), width=2 * S)   # highlight
+    # an orange slice on the rim and a straw
+    d.line(R(128, 6, 116, 70), fill=(80, 200, 120), width=4 * S)
+    cx, cy, r = 146, 24, 15
+    d.ellipse(R(cx - r, cy - r, cx + r, cy + r), fill=(255, 140, 0))
+    d.ellipse(R(cx - r + 3, cy - r + 3, cx + r - 3, cy + r - 3), fill=(255, 200, 80))
+    for k in range(6):
+        import math
+        a = k * math.pi / 3
+        d.line(R(cx, cy, cx + (r - 4) * math.cos(a), cy + (r - 4) * math.sin(a)), fill=(255, 150, 20), width=S)
+    img = big.resize((W, H), Image.LANCZOS)
     d = ImageDraw.Draw(img)
-    # an amp knob: dark body, amber arc for the travel, pointer at ~2 o'clock
-    cx, cy, r = 120, 84, 46
-    for i in range(18, 0, -1):                       # soft glow
-        a = int(10 + i * 1.2)
-        d.ellipse((cx - r - i, cy - r - i, cx + r + i, cy + r + i), outline=(a + 12, a // 2 + 6, 4))
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(28, 28, 32), outline=(60, 60, 66), width=2)
-    d.arc((cx - r - 9, cy - r - 9, cx + r + 9, cy + r + 9), 135, 405, fill=(70, 50, 20), width=4)
-    d.arc((cx - r - 9, cy - r - 9, cx + r + 9, cy + r + 9), 135, 330, fill=(255, 160, 40), width=4)
-    d.line((cx, cy, cx + 30, cy - 20), fill=(255, 190, 90), width=4)
-    d.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=(255, 160, 40))
-    # name and subtitle
-    t = "armaria"
-    f = font(40, 650)
+    t = "Juice-Box"
+    f = font(36, 700)
     w = d.textlength(t, font=f)
-    d.text(((W - w) / 2, 140), t, font=f, fill=(240, 236, 228))
+    d.text(((W - w) / 2, 124), t, font=f, fill=(250, 244, 232))
     t = "N A M   P L A Y E R"
-    f = font(13, 500)
+    f = font(12, 550)
     w = d.textlength(t, font=f)
-    d.text(((W - w) / 2, 190), t, font=f, fill=(255, 160, 40))
+    d.text(((W - w) / 2, 168), t, font=f, fill=(255, 160, 40))
+    t = "por João Viana"
+    f = font(13, 450)
+    w = d.textlength(t, font=f)
+    d.text(((W - w) / 2, 186), t, font=f, fill=(150, 146, 140))
     d.line((20, STATUS_Y - 4, W - 20, STATUS_Y - 4), fill=(40, 40, 46), width=1)
     return img
 
 
 def rgb565_be(img):
     out = bytearray()
-    for r, g, b in img.getdata():
+    for r, g, b in (img.get_flattened_data() if hasattr(img, 'get_flattened_data') else img.getdata()):
         v = (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)
         out += struct.pack(">H", v)
     return bytes(out)

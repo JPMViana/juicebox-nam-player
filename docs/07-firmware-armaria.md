@@ -1,10 +1,24 @@
-# 07 – Firmware armaria-nam
+# 07 – Firmware Juice-Box (ex-armaria-nam)
 
-Nome provisório: **armaria-nam**. Identidade no protocolo de update: `BlackBox_9xx`
+Nome: **Juice-Box**, por **João Viana** (até a v0.1.2: armaria-nam). Identidade no protocolo de update: `BlackBox_9xx`
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
-## v0.1.2 (2026-10-22) — gravado e rodando
+## v0.2.x (2026-10-22) — Juice-Box, gravado e rodando (v0.2.2 = `BlackBox_906`)
+
+- Novo nome e logo (jarra de suco), "por João Viana" na tela de abertura; USB:
+  produto `Juice-Box`, fabricante `João Viana` (o macOS pode manter o nome antigo
+  da porta MIDI em cache: o VID:PID não mudou).
+- **Registro de boot na flash** (`0xB9000`, registros de 32 B) + leitura por USB:
+  `.venv/bin/python tools/jb_log.py`. Cada boot grava até onde o boot anterior
+  chegou (estágio, ms, laços), motivo do reset e os contadores do bootguard.
+  - v0.2.1: o setor tinha restos da VM de fábrica; agora só grava em slot 100 %
+    vazio e apaga o setor se achar algo que não seja nosso.
+  - v0.2.2: contadores fora de faixa são zerados (os carregadores usam a mesma RAM).
+- **Em aberto:** ligado só na bateria (sem cabo), o pedal entra no resgate (tela
+  preta) mesmo sem a regra removida na v0.1.2. O registro de boot existe para isso.
+
+## v0.1.2 (2026-10-22)
 
 Incidente da v0.1.1: indicador "USB OK" não sumia ao desconectar e, ligado só na
 bateria, o pedal ficava de tela preta. Causa (minha): a regra extra de resgate
