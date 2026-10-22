@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+reference/
+firmware/**/*.fwsc
+firmware/**/*.bin
+firmware/dumps/
+analysis/v20_unpack/
+analysis/v20_app_strings.txt
+analysis/ghidra/
+.DS_Store
+.toolchain/
+nam/bench/out/
+build/
+analysis/v019_check/
+analysis/v20_pkg/
