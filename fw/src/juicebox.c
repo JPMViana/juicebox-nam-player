@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.2.3"
+#define JB_VERSION "v0.3"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_907"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_908"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_907"
+#define OTA_LOADER_ID "ota-BlackBox_908"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -297,6 +297,153 @@ static void hex(char *d, uint32_t v, uint32_t digits)
 {
     while (digits--)
         *d++ = "0123456789ABCDEF"[(v >> (4u * digits)) & 15u];
+}
+
+/* 8x16 text at (x, y), cell background bg */
+static void text_at(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
+{
+    uint32_t n = 0, row, i;
+    while (s[n] && n < 30u)
+        n++;
+    if (!n)
+        return;
+    lcd_window(x, y, x + n * 8u - 1u, y + 15u);
+    for (row = 0; row < 16u; row++) {
+        for (i = 0; i < n * 8u; i++) {
+            uint32_t ch = (uint8_t)s[i / 8u];
+            uint32_t bits = ch >= 32u && ch < 127u ? FONT8X16[(ch - 32u) * 16u + row] : 0u;
+            uint16_t c = bits & (0x80u >> (i % 8u)) ? fg : bg;
+            lcd_buf[2 * i] = (uint8_t)(c >> 8);
+            lcd_buf[2 * i + 1] = (uint8_t)c;
+        }
+        lcd_data(lcd_buf, n * 16u);
+    }
+}
+
+/* ------------------------------------------------------------ input test --- */
+/* v0.3: the inputs the stock firmware configures (docs/06), shown live and sent over USB
+ * (SysEx F0 7D 'J' 'B' 'I' <digital bits, 2 x 7> <3 ADC values, 2 x 7 bits each> F7, on change)
+ * so the panel can be mapped by pressing / turning. Digital: pull-up inputs, scanned by the stock
+ * firmware every 20 ms (the 7 first) and 50 ms (PC1, PC0). Analog: SARADC channels scanned every 15 ms. */
+#define PORT_REG(p, r) (*(volatile uint32_t *)(0x50000u + (p) * 0x40u + (r)))
+enum { P_A = 0, P_B = 1, P_C = 2, P_H = 7 };
+enum { R_OUT = 0x00, R_IN = 0x04, R_DIR = 0x08, R_DIE = 0x0C, R_PU = 0x10, R_PD = 0x14 };
+static const uint8_t DIN[][2] = {{P_H, 6}, {P_A, 1}, {P_A, 0}, {P_H, 9}, {P_H, 8}, {P_A, 3}, {P_A, 2}, {P_C, 1}, {P_C, 0}};
+static const char *const DIN_NAME[] = {"PH6", "PA1", "PA0", "PH9", "PH8", "PA3", "PA2", "PC1", "PC0"};
+#define N_DIN (sizeof DIN / sizeof DIN[0])
+static const uint8_t AIN[][3] = {{P_A, 10, 2}, {P_C, 10, 9}, {P_C, 9, 8}};   /* port, pin, SARADC channel */
+static const char *const AIN_NAME[] = {"PA10", "PC10", "PC9"};
+#define N_AIN (sizeof AIN / sizeof AIN[0])
+#define ADC_CON (*(volatile uint32_t *)0x13100u)
+#define ADC_RES (*(volatile uint32_t *)0x13104u)
+#define WLA_CON0 (*(volatile uint32_t *)0x11900u)
+
+static void inputs_init(void)
+{
+    uint32_t i, m;
+    for (i = 0; i < N_DIN; i++) {                 /* as stock: pull-up on, pull-down off, digital in */
+        m = 1u << DIN[i][1];
+        PORT_REG(DIN[i][0], R_PU) |= m;
+        PORT_REG(DIN[i][0], R_PD) &= ~m;
+        PORT_REG(DIN[i][0], R_DIE) |= m;
+        PORT_REG(DIN[i][0], R_DIR) |= m;
+    }
+    for (i = 0; i < N_AIN; i++) {                 /* as stock: no pulls, digital input off, input */
+        m = 1u << AIN[i][1];
+        PORT_REG(AIN[i][0], R_PU) &= ~m;
+        PORT_REG(AIN[i][0], R_PD) &= ~m;
+        PORT_REG(AIN[i][0], R_DIE) &= ~m;
+        PORT_REG(AIN[i][0], R_DIR) |= m;
+    }
+}
+
+static uint32_t din_read(void)                    /* bit i = 1: pressed (pin low) */
+{
+    uint32_t i, v = 0;
+    for (i = 0; i < N_DIN; i++)
+        if (!(PORT_REG(DIN[i][0], R_IN) & (1u << DIN[i][1])))
+            v |= 1u << i;
+    return v;
+}
+
+static int32_t adc_read(uint32_t ch)              /* 0..1023, -1 on timeout (Felucca fm1_adc_read) */
+{
+    uint32_t t, v;
+    ADC_CON = 0;
+    if (WLA_CON0 & (1u << 14))
+        WLA_CON0 &= ~(1u << 14);
+    ADC_CON = 0xF04Eu | ((ch & 0xFu) << 8);
+    ADC_CON |= 0x10u;
+    ADC_CON |= 0x40u;
+    for (t = 0; t < 20000u; t++)
+        if (ADC_CON & 0x80u)
+            break;
+    v = ADC_RES & 0x3FFu;
+    ADC_CON = 0x40u;
+    ADC_CON = 0;
+    return t == 20000u ? -1 : (int32_t)v;
+}
+
+#define C_HOT RGB(255, 150, 30)
+#define C_DIM RGB(90, 90, 96)
+
+static void dec4(char *d, int32_t v)
+{
+    uint32_t u = v < 0 ? 9999u : (uint32_t)v, k;
+    for (k = 4; k--;) {
+        d[k] = (char)('0' + u % 10u);
+        u /= 10u;
+    }
+}
+
+static void test_screen(void)
+{
+    uint32_t i;
+    lcd_fill(0, 0, LCD_W, LCD_H, C_BG);
+    text_at(8, 4, "Juice-Box " JB_VERSION "  ENTRADAS", C_HOT, C_BG);
+    for (i = 0; i < N_DIN; i++)
+        text_at(8u + (i % 5u) * 46u, 30u + (i / 5u) * 22u, DIN_NAME[i], C_DIM, C_BG);
+    for (i = 0; i < N_AIN; i++)
+        text_at(8, 90u + i * 34u, AIN_NAME[i], C_TEXT, C_BG);
+    text_at(8, 196, "aperte / gire os controles", C_DIM, C_BG);
+}
+
+static void test_draw(uint32_t din, uint32_t din_old, const int32_t *a, const int32_t *a_old, uint32_t first)
+{
+    uint32_t i, w;
+    char num[5] = "0000";
+    for (i = 0; i < N_DIN; i++)
+        if (first || ((din ^ din_old) >> i & 1u))
+            text_at(8u + (i % 5u) * 46u, 30u + (i / 5u) * 22u, DIN_NAME[i], din >> i & 1u ? C_BG : C_DIM,
+                    din >> i & 1u ? C_HOT : C_BG);
+    for (i = 0; i < N_AIN; i++) {
+        if (!first && a[i] == a_old[i])
+            continue;
+        dec4(num, a[i]);
+        text_at(56, 90u + i * 34u, num, C_TEXT, C_BG);
+        w = a[i] < 0 ? 0u : (uint32_t)a[i] * 136u / 1023u;
+        if (w)
+            lcd_fill(96, 94u + i * 34u, w, 8, C_HOT);
+        if (w < 136u)
+            lcd_fill(96u + w, 94u + i * 34u, 136u - w, 8, RGB(40, 40, 46));
+    }
+}
+
+static void test_send(uint32_t din, const int32_t *a)
+{
+    static uint8_t m[16];
+    uint32_t i, n = 0;
+    m[n++] = 0xF0; m[n++] = 0x7D; m[n++] = 'J'; m[n++] = 'B'; m[n++] = 'I';
+    m[n++] = (uint8_t)(din & 0x7Fu);
+    m[n++] = (uint8_t)(din >> 7 & 0x7Fu);
+    for (i = 0; i < N_AIN; i++) {
+        uint32_t v = a[i] < 0 ? 0x3FFFu : (uint32_t)a[i];
+        m[n++] = (uint8_t)(v & 0x7Fu);
+        m[n++] = (uint8_t)(v >> 7 & 0x7Fu);
+    }
+    m[n++] = 0xF7;
+    if (usb.config && !usb.suspended)
+        ota_wire_send(m, n);
 }
 
 /* ----------------------------------------------------------------- flash --- */
@@ -564,7 +711,13 @@ static void jb_main(void)
         delay_poll(3000);
     }
 
+    inputs_init();
+    delay_poll(1500);                             /* the splash, a moment */
+    test_screen();
     STAGE(9);
+    {
+    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, i;
+    int32_t a[N_AIN] = {0}, a_old[N_AIN] = {0};
     for (;;) {
         uint32_t now = now_ms(), st;
         crumb.ms = now;
@@ -590,9 +743,30 @@ static void jb_main(void)
         st = usb.up && usb.config && !usb.suspended ? 2u : 1u;   /* suspended: bus idle, the cable is out */
         if (st != shown) {
             shown = st;
-            status(st == 2u ? JB_NAME " " JB_VERSION "  USB OK" : JB_NAME " " JB_VERSION,
-                   st == 2u ? C_OK : C_TEXT);
+            status(st == 2u ? "USB OK" : "sem USB", st == 2u ? C_OK : C_DIM);
         }
+        if (now - t_scan >= 5u) {                 /* inputs every 5 ms, ADC every 15 ms */
+            uint32_t changed = 0;
+            t_scan = now;
+            din = din_read();
+            if (now - t_adc >= 15u) {
+                t_adc = now;
+                for (i = 0; i < N_AIN; i++) {
+                    a[i] = adc_read(AIN[i][2]);
+                    if (first || a[i] - a_old[i] > 6 || a_old[i] - a[i] > 6)
+                        changed = 1;
+                }
+            }
+            if (first || changed || din != din_old) {
+                test_draw(din, din_old, a, a_old, first);
+                test_send(din, a);
+                din_old = din;
+                for (i = 0; i < N_AIN; i++)
+                    a_old[i] = a[i];
+                first = 0;
+            }
+        }
+    }
     }
 }
 
