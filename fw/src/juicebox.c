@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.6"
+#define JB_VERSION "v0.7"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_913"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_914"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_913"
+#define OTA_LOADER_ID "ota-BlackBox_914"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -527,6 +527,26 @@ static uint32_t au_halves, au_late;
 static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (default: the guitar is on L), 2 R */
 static volatile uint8_t snap_req, snap_ready, snap_trig;
 static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
+/* v0.7 output diagnostics: MOD = guitar / 440 Hz test tone; AMP = the DAC word format */
+static volatile uint8_t au_tone, au_fmt;
+static uint32_t au_phase;
+static const int16_t SINQ[65] = {0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793, 12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403, 22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683, 28105, 28510, 28898, 29268, 29621, 29956, 30273, 30571, 30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285, 32412, 32521, 32609, 32678, 32728, 32757, 32767};
+#define N_FMT 5u
+static const char *const FMT_NAME[N_FMT] = {"DAC: <<8 (LJ24)", "DAC: <<7", "DAC: <<9", "DAC: <<16 (16b)", "DAC: RJ24"};
+
+static int32_t tone_next(void)                   /* 440 Hz, -12 dBFS, 24-bit */
+{
+    uint32_t ph = au_phase, idx = ph >> 24, q = idx & 63u;
+    int32_t v;
+    au_phase += 42834620u;                        /* 440 / 44118 * 2^32 */
+    switch (idx >> 6) {
+    case 0: v = SINQ[q]; break;
+    case 1: v = SINQ[64u - q]; break;
+    case 2: v = -SINQ[q]; break;
+    default: v = -SINQ[64u - q]; break;
+    }
+    return v * 64;                                /* 32767 * 64 = 2^21: -12 dBFS of 2^23 */
+}
 static int32_t snap_buf[AU_HALF] __attribute__((aligned(4)));
 
 static void pa_out(uint32_t pin, uint32_t v)      /* gpio_direction_output */
@@ -635,6 +655,12 @@ static void audio_service(void)
     for (i = 0; i < AU_HALF; i++) {
         uint32_t src = au_route == 0u ? i : au_route == 1u ? (i & ~1u) : (i | 1u);
         int32_t x = (int32_t)((uint32_t)in[src] << 8) >> 8;   /* sign-extend the 24-bit sample */
+        if (au_tone) {
+            static int32_t t;
+            if (!(i & 1u))
+                t = tone_next();
+            x = t;
+        }
         int64_t y = (int64_t)x * (int64_t)g >> 16;
         uint32_t ax = (uint32_t)(x < 0 ? -x : x);
         if (ax > au_peak[i & 1u])
@@ -651,7 +677,13 @@ static void audio_service(void)
             y = -0x800000;
             au_clip_out++;
         }
-        out[i] = (int32_t)((uint32_t)y << 8);     /* 24-bit, left-justified for the DAC */
+        switch (au_fmt) {                         /* 24-bit sample y -> the DAC word */
+        case 0: out[i] = (int32_t)((uint32_t)y << 8); break;
+        case 1: out[i] = (int32_t)((uint32_t)y << 7); break;
+        case 2: out[i] = (int32_t)((uint32_t)y << 9); break;
+        case 3: out[i] = (int32_t)((uint32_t)(y >> 8) << 16); break;
+        default: out[i] = (int32_t)y; break;
+        }
     }
     ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
@@ -839,7 +871,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
         uint32_t st[8], k;
         ota_frame_done();
         st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = au_clip_in;
-        st[4] = au_clip_out; st[5] = au_us_max; st[6] = au_gain; st[7] = au_route;
+        st[4] = au_clip_out; st[5] = au_us_max; st[6] = au_gain; st[7] = au_route | (uint32_t)au_fmt << 8 | (uint32_t)au_tone << 16;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
         k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
         msg[k++] = 0xF7;
@@ -1003,11 +1035,11 @@ static void jb_main(void)
             snap_send();
             snap_ready = 0;
         }
-        if (now - t_led >= 70u) {                 /* LED ping-pong: a lit ball with a fading trail */
+        if (now - t_led >= 120u) {                /* LED ping-pong: a lit ball with a fading trail */
             uint32_t k;
             t_led = now;
             for (k = 0; k < 8u; k++)
-                led_bri[k] = (uint8_t)(led_bri[k] * 9u / 16u);
+                led_bri[k] = (uint8_t)(led_bri[k] * 10u / 16u);
             led_bri[led_pos] = 16;
             if (led_pos + led_dir < 0 || led_pos + led_dir > 7)
                 led_dir = -led_dir;
@@ -1045,6 +1077,16 @@ static void jb_main(void)
             if (a[0] >= 0) {                      /* MASTER (PA10) -> output gain, squared curve, 0..1.0 */
                 uint32_t v = (uint32_t)a[0];
                 au_gain = v * v * 65536u / (1023u * 1023u);
+            }
+            if ((din & ~din_old) & (1u << 3)) {   /* AMP: next DAC format */
+                au_fmt = (uint8_t)((au_fmt + 1u) % N_FMT);
+                text_at(8, 4, "                             ", C_HOT, C_BG);
+                text_at(8, 4, FMT_NAME[au_fmt], C_HOT, C_BG);
+            }
+            if ((din & ~din_old) & (1u << 4)) {   /* MOD: guitar / test tone */
+                au_tone ^= 1u;
+                text_at(8, 4, "                             ", C_HOT, C_BG);
+                text_at(8, 4, au_tone ? "FONTE: TOM 440 Hz" : "FONTE: GUITARRA", C_HOT, C_BG);
             }
             if ((din & ~din_old) & (1u << 2)) {   /* FX pressed: next routing */
                 static const char *const RT[] = {"SAIDA: ESTEREO", "SAIDA: L -> L+R", "SAIDA: R -> L+R"};
