@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.3"
+#define JB_VERSION "v0.4"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_908"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_909"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_908"
+#define OTA_LOADER_ID "ota-BlackBox_909"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -74,8 +74,11 @@ static uint32_t now_ms(void)                    /* monotonic; survives the TIMER
     return ms;
 }
 
-static void poll(void)                          /* watchdog, USB at ~2 kHz */
+static void audio_service(void);
+
+static void poll(void)                          /* watchdog, USB at ~2 kHz, audio halves */
 {
+    audio_service();
     static uint32_t last;
     uint32_t now = fm1_ticks();
     fm1_wdt_feed();
@@ -405,7 +408,8 @@ static void test_screen(void)
         text_at(8u + (i % 5u) * 46u, 30u + (i / 5u) * 22u, DIN_NAME[i], C_DIM, C_BG);
     for (i = 0; i < N_AIN; i++)
         text_at(8, 90u + i * 34u, AIN_NAME[i], C_TEXT, C_BG);
-    text_at(8, 196, "aperte / gire os controles", C_DIM, C_BG);
+    text_at(8, 180, "IN L", C_TEXT, C_BG);
+    text_at(8, 196, "IN R", C_TEXT, C_BG);
 }
 
 static void test_draw(uint32_t din, uint32_t din_old, const int32_t *a, const int32_t *a_old, uint32_t first)
@@ -444,6 +448,128 @@ static void test_send(uint32_t din, const int32_t *a)
     m[n++] = 0xF7;
     if (usb.config && !usb.suspended)
         ota_wire_send(m, n);
+}
+
+/* ----------------------------------------------------------------- audio --- */
+/* External codec on ALNK0 (I2S), set up as the stock firmware does (docs/06, 0x02007490):
+ * MCLK PA4, SCLK PA5, LRCK PA6, channel 0 = TX (DAC) on PA7, channel 1 = RX (ADC) on PA8, PA9 = codec
+ * enable (low, then high once the link runs). ~44118 Hz, 24-bit left-justified in int32, L/R interleaved.
+ * Double-buffered DMA; polled from poll(): CON2 bit 4 + ch = half done, write bit ch to clear;
+ * CON0 bit 15 = the half the DMA is in. v0.4: passthrough, MASTER pot = output level. */
+#define ALNK 0x12E00u
+#define ALNK_CON0 (*(volatile uint16_t *)(ALNK + 0x00u))
+#define ALNK_CON1 (*(volatile uint16_t *)(ALNK + 0x04u))
+#define ALNK_CON2 (*(volatile uint8_t *)(ALNK + 0x08u))
+#define ALNK_CON3 (*(volatile uint8_t *)(ALNK + 0x0Cu))
+#define ALNK_ADR0 (*(volatile uint32_t *)(ALNK + 0x10u))
+#define ALNK_ADR1 (*(volatile uint32_t *)(ALNK + 0x14u))
+#define ALNK_LEN (*(volatile uint16_t *)(ALNK + 0x20u))
+#define CLK_CON2 (*(volatile uint32_t *)0x10014u)
+#define IOMAP_CON5 (*(volatile uint32_t *)0x51030u)
+#define AU_HALF 256u                              /* int32 words per half: 128 stereo frames, 2.9 ms */
+static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
+static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
+static uint8_t au_on;
+static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
+static uint32_t au_peak[2];                       /* |input| peak per channel since the last read */
+static uint32_t au_halves, au_late;
+
+static void pa_out(uint32_t pin, uint32_t v)      /* gpio_direction_output */
+{
+    if (v)
+        PORT_REG(P_A, R_OUT) |= 1u << pin;
+    else
+        PORT_REG(P_A, R_OUT) &= ~(1u << pin);
+    PORT_REG(P_A, R_DIR) &= ~(1u << pin);
+}
+
+static void audio_start(void)
+{
+    uint32_t i;
+    for (i = 0; i < 2u * AU_HALF; i++)
+        au_tx[i] = au_rx[i] = 0;
+    pa_out(9, 0);                                 /* codec off */
+    fm1_delay_ms(5);
+    ALNK_CON0 = 0;
+    ALNK_CON1 = 0;
+    ALNK_CON2 = 0;
+    ALNK_CON3 = 0;
+    IOMAP_CON5 = (IOMAP_CON5 & ~0xC0u) | 0x40u;   /* as stock (the FM-1 uses 0) */
+    ALNK_CON3 |= 3u;
+    pa_out(4, 1);                                 /* MCLK */
+    ALNK_CON0 |= 0x100u;
+    pa_out(6, 1);                                 /* LRCK */
+    pa_out(5, 1);                                 /* SCLK */
+    ALNK_CON0 |= 0x80u;
+    ALNK_CON0 &= ~0x40u;
+    ALNK_LEN = AU_HALF;
+    ALNK_CON0 &= ~0x400u;
+    ALNK_CON0 &= ~0x200u;
+    CLK_CON2 &= 0xFFFFF0FFu;
+    ALNK_CON3 &= ~0x1Cu;
+    ALNK_CON3 = (uint8_t)((ALNK_CON3 & 0x1Fu) | 0x80u);
+    /* channel 0: TX on PA7 */
+    ALNK_CON1 |= 1u << 0;
+    ALNK_CON1 |= 1u << 2;
+    ALNK_ADR0 = (uint32_t)au_tx;
+    pa_out(7, 1);
+    ALNK_CON1 &= ~(1u << 3);
+    /* channel 1: RX on PA8 (input, pull-up, digital) */
+    ALNK_CON1 |= 1u << 4;
+    ALNK_CON1 |= 1u << 6;
+    ALNK_ADR1 = (uint32_t)au_rx;
+    PORT_REG(P_A, R_DIR) |= 1u << 8;
+    PORT_REG(P_A, R_PD) &= ~(1u << 8);
+    PORT_REG(P_A, R_DIE) |= 1u << 8;
+    PORT_REG(P_A, R_PU) |= 1u << 8;
+    ALNK_CON1 |= 1u << 7;
+    ALNK_CON2 = 0x0Fu;                            /* clear pendings */
+    ALNK_CON0 |= 0x800u;                          /* run */
+    fm1_delay_ms(5);
+    pa_out(9, 1);                                 /* codec on */
+    au_on = 1;
+}
+
+static void audio_stop(void)
+{
+    if (!au_on)
+        return;
+    ALNK_CON0 &= ~0x800u;
+    pa_out(9, 0);
+    au_on = 0;
+}
+
+static void audio_service(void)
+{
+    uint8_t p;
+    uint32_t h, i, g;
+    int32_t *in, *out;
+    if (!au_on)
+        return;
+    p = ALNK_CON2;
+    if (!(p & 0x10u))                             /* channel 0 (TX) half not done yet */
+        return;
+    if ((p & 0x30u) == 0x30u)
+        au_halves++;
+    else
+        au_late++;
+    h = ((ALNK_CON0 >> 15) & 1u) ^ 1u;            /* the half both DMAs just left */
+    in = au_rx + h * AU_HALF;
+    out = au_tx + h * AU_HALF;
+    g = au_gain;
+    for (i = 0; i < AU_HALF; i++) {
+        int32_t x = in[i] >> 8;                   /* 24-bit sample */
+        int64_t y = (int64_t)x * (int64_t)g >> 16;
+        uint32_t ax = (uint32_t)(x < 0 ? -x : x);
+        if (ax > au_peak[i & 1u])
+            au_peak[i & 1u] = ax;
+        if (y > 0x7FFFFF)
+            y = 0x7FFFFF;
+        if (y < -0x800000)
+            y = -0x800000;
+        out[i] = (int32_t)y << 8;
+    }
+    ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
 }
 
 /* ----------------------------------------------------------------- flash --- */
@@ -545,6 +671,7 @@ static void ota_show(uint32_t step, int32_t code)
 
 static void ota_commit(const uint8_t *parm)
 {
+    audio_stop();
     bootguard.pending = 0;                        /* intentional reset */
     BG_SEAL();
     usb_detach();
@@ -714,9 +841,10 @@ static void jb_main(void)
     inputs_init();
     delay_poll(1500);                             /* the splash, a moment */
     test_screen();
+    audio_start();
     STAGE(9);
     {
-    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, i;
+    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, i;
     int32_t a[N_AIN] = {0}, a_old[N_AIN] = {0};
     for (;;) {
         uint32_t now = now_ms(), st;
@@ -731,8 +859,10 @@ static void jb_main(void)
         ota_service();                            /* M-UPGRADE handshake */
         if (usb.ota_req) {
             usb.ota_req = 0;
+            audio_stop();                         /* no buzz while the flash is busy */
             if (flash_ok)
                 ota_session();                    /* returns only if nothing was committed */
+            audio_start();
             shown = 0xFFu;
         }
         if (bootguard.pending && now - t_boot > 30000u) {
@@ -745,6 +875,23 @@ static void jb_main(void)
             shown = st;
             status(st == 2u ? "USB OK" : "sem USB", st == 2u ? C_OK : C_DIM);
         }
+        if (now - t_meter >= 60u) {               /* input meters */
+            uint32_t ch, w;
+            t_meter = now;
+            for (ch = 0; ch < 2u; ch++) {
+                uint32_t pk = au_peak[ch], lv = 0;
+                au_peak[ch] = 0;
+                while (pk > 64u && lv < 17u) {    /* ~6 dB steps from -102 dBFS */
+                    pk >>= 1;
+                    lv++;
+                }
+                w = lv * 8u;
+                if (w)
+                    lcd_fill(56, 184u + ch * 16u, w, 8, lv >= 16u ? C_ERR : lv >= 13u ? C_WARN : C_OK);
+                if (w < 136u)
+                    lcd_fill(56u + w, 184u + ch * 16u, 136u - w, 8, RGB(40, 40, 46));
+            }
+        }
         if (now - t_scan >= 5u) {                 /* inputs every 5 ms, ADC every 15 ms */
             uint32_t changed = 0;
             t_scan = now;
@@ -756,6 +903,10 @@ static void jb_main(void)
                     if (first || a[i] - a_old[i] > 6 || a_old[i] - a[i] > 6)
                         changed = 1;
                 }
+            }
+            if (a[0] >= 0) {                      /* MASTER (PA10) -> output gain, squared curve, 0..1.0 */
+                uint32_t v = (uint32_t)a[0];
+                au_gain = v * v * 65536u / (1023u * 1023u);
             }
             if (first || changed || din != din_old) {
                 test_draw(din, din_old, a, a_old, first);

@@ -89,22 +89,32 @@ janela + blit `0x0201E3B2`.
 quase direto. Trocar pinos (port A: PB6/PB7, D/C PB5, CS PB1), o offset de linha
 (+40) e a tabela de init acima.
 
-## Áudio — conclusão provisória
+## Áudio — **codec externo por I²S (ALNK0)** (revisado em 2026-10-22)
 
-**Codec interno do AC791N** (ADC + DAC do bloco `JL_AUDIO`), sem codec externo:
+A conclusão anterior ("codec interno") estava errada: o histograma não pegou
+`r5 = 0x12E00`, impresso em hexadecimal. A inicialização de áudio do V20
+(`0x02007490`, chamada com `r14 = 0x0205B9B8`, pool de constantes) segue passo a
+passo a do Felucca no FM-1 (`hal/fm1_audio.h`), com outros pinos:
 
-- `JL_AUDIO` (`0x12F00`): o app acessa `DAC_CON` (`+0x00`) e `ADC_CON` (`+0x40`)
-  e outros registradores do ADC/DAC; driver do SDK em `0x02049920`–`0x0204C320`.
-- `JL_ANA` (`0x11900`, 34 refs): front-end analógico (ganho, seleção de entrada, LDOs).
-- I²S (`ALNK0/1`): nenhum ponteiro de base em tabela; a única função de placa
-  (`0x02029E8C`, chamada pelo init da tela) **solta** os pinos do I²S e zera `CON1`.
-- I²C (`JL_IIC`, `0x12400`): nunca acessado. Um codec externo precisaria dele.
-- String `linein` presente: entrada da guitarra provavelmente pelo caminho line-in/AUX do ADC.
+| Sinal | Pino | Origem |
+|---|---|---|
+| MCLK | **PA4** | tabela de pinos `r14+1899` = `0x0205C123`: `PA4 PA5 PA6 PA7 PA8 PA9 PA10` |
+| SCLK | **PA5** | |
+| LRCK | **PA6** | |
+| DAT0 → DAC (canal 0, TX) | **PA7** | tabela de canais `r14+4164` = `0x0205C9FC` (16 B/canal: `+4` liga, `+8` 1 = RX, `+12` buffer) |
+| DAT1 ← ADC (canal 1, RX) | **PA8** | |
+| Habilita o codec | **PA9** | 0 no início, 1 depois que o link roda (como o PC6 do FM-1) |
 
-Implicações: a saída (DAC) já é dominada pelo Felucca (`hal/fm1_audio.h`, mesmo
-chip). **A entrada (ADC) é o ponto novo**: precisamos rastrear as escritas em
-`ADC_CON` e `JL_ANA` do app de fábrica (`0x0204B06C`, `0x0204B85A`) e replicá-las.
-A especificação de 105 dB de faixa dinâmica é do fabricante, não foi medida.
+- `IOMAP_CON5` bits 7:6 = `01` (o FM-1 usa `00`); `CON3 |= 3`; `CLK_CON2 &= ~0xF00`.
+- Taxa **44118 Hz** (`0x01C25758 = 44118`), 24 bits alinhados à esquerda em int32, L/R
+  intercalados; buffers de 1 KB por canal, `LEN = 128` palavras por metade no V20.
+- `CON1`: por canal `ch`, bit `4ch` liga, bit `4ch+2` (sempre), bit `4ch+3` = RX.
+  `CON2`: bit `4+ch` = metade concluída, escrever bit `ch` limpa. `CON0` bit 15 = metade em uso.
+- Sem I²C: o codec é configurado por pinos (modelo ainda não identificado; foto da placa
+  confirmaria). O bloco `JL_AUDIO` interno é tocado pelo driver do SDK, mas não é o caminho do som.
+
+**Juice-Box v0.4**: passthrough implementado com exatamente essa sequência (`fw/src/juicebox.c`
+`audio_start`), metades de 256 palavras (2,9 ms), MASTER = ganho de saída.
 
 ## Controles do painel — **mapeados no pedal** (Juice-Box v0.3, 2026-10-22)
 
@@ -123,7 +133,7 @@ Configuração lida do V20 (`0x020061C0`) e confirmada pressionando cada control
 | Footswitch esquerdo (▼) | **PA3** | digital |
 | Footswitch direito (▲) | **PA2** | digital (os dois juntos = afinador no V20) |
 | MASTER (knob esquerdo) | **PA10** (SARADC ch 2) | potenciômetro 0..1023 |
-| PARA (knob direito), giro | **PC1 / PC0** | encoder em quadratura: 4 transições por detente; horário = PC1 lidera |
+| PARA (knob direito), giro | **PC1 / PC0** | encoder em quadratura: 4 transições por detente; **anti-horário = PC1 lidera, horário = PC0 lidera** |
 | PARA, clique | **PH6** | digital |
 | ? | **PC9** (SARADC ch 8) | constante ~611: provavelmente divisor da bateria — a confirmar |
 
@@ -131,7 +141,7 @@ Limiares sugeridos para a escada do PC10: < 661 = CAB, < 746 = DLY, < 905 = REV.
 
 ## Próximos alvos
 
-- [ ] Áudio: rastrear init do ADC (`ADC_CON`, `JL_ANA`), canal line-in, taxa, DMA
+- [x] Áudio: I²S/codec externo mapeado (tabela acima); passthrough na v0.4 — aguardando teste com guitarra
 - [x] Footswitches, botões e knobs (tabela acima)
 - [ ] PC7 e backlight; LEDs
 - [ ] Bateria/carga (`JL_P33`, SARADC)
