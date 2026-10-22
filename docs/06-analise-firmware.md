@@ -3,7 +3,7 @@
 ## Método
 
 1. `bbpkg.py unpack` → `analysis/v20_pkg/app.bin` (copiado para `analysis/disasm/app_v20.bin`).
-2. O binário é embrulhado num objeto (`.incbin`), linkado em `0x02000000`
+2. O binário é embrulhado num objeto (`.incbin`), linkado em `0x02000120` (o offset 0 do `app.bin` é mapeado ali pelo SPL — o mesmo do `app.ld` do Felucca)
    (`analysis/disasm/link.ld`) e desmontado com o `objdump` da própria JieLi
    (`scripts/pi32cc.sh common/bin/objdump -d`) → `analysis/disasm/app_v20.dis`
    (~245 mil linhas). Mesmo método do FM-1-RE; o objdump da JieLi é a referência
@@ -22,7 +22,7 @@ produtivo é partir dos **registradores de periféricos**.
 
 | Região | Endereço | Tamanho |
 |---|---|---|
-| Código/rodata (XIP) | `0x02000000` – `0x020A0160` | 640 KB |
+| Código/rodata (XIP) | `0x02000120` – `0x020A0280` | 640 KB |
 | `.data` (LMA na flash) | `0x02091720` → RAM `0x01C00000` | `0xEB40` (59 KB) |
 | `.bss` | `0x01C0EB40` | `0x1A5E0` (108 KB) |
 | Pilhas | `sp = 0x01C1CC3C`, `ssp = 0x01C1DC3C` | — |
@@ -58,12 +58,12 @@ Controlador **ST7789** (comandos MIPI-DCS), interface SPI de 4 fios, só escrita
 - `JL_SPI1->CON = 0x4020`, `BAUD = 1` (SCK = LSB/2), envio de dados por DMA
   (`ADR`/`CNT`), espera pelo bit 15 do `CON`.
 - **Área visível 240×240** na RAM de um controlador 240×320: `CASET 0..239`,
-  `RASET 40..279`. A rotina de limpar tela (`0x2028ED0`) varre os 320×240 inteiros
+  `RASET 40..279`. A rotina de limpar tela (`0x2028FF0`) varre os 320×240 inteiros
   e depois manda `DISPON (0x29)`.
 - Cor **RGB565** (`COLMOD 0x55`), `MADCTL 0x00`, inversão ligada.
 
-Tabela de init em `0x0205CD40` (23 entradas de 18 bytes `[cmd][len][16 dados]`,
-lida por `0x0202A39E`; as entradas 1 e 3 são pausas, com o tempo em ms no byte 1):
+Tabela de init em `0x0205CE60` (23 entradas de 18 bytes `[cmd][len][16 dados]`,
+lida por `0x0202A4BE`; as entradas 1 e 3 são pausas, com o tempo em ms no byte 1):
 
 ```
 01 SWRESET          ; 120 ms
@@ -80,8 +80,8 @@ E1 D0 0D 14 0B 0B 07 3A 44 50 08 13 13 2D 32
 21 INVON
 ```
 
-Funções: init `0x0202A39E` (GPIO + SPI1 + tabela), limpar/ligar `0x02028ED0`,
-janela + blit `0x0201E292`.
+Funções: init `0x0202A4BE` (GPIO + SPI1 + tabela), limpar/ligar `0x02028FF0`,
+janela + blit `0x0201E3B2`.
 
 **Para o nosso firmware:** o `lcd.c` do Felucca (ST7789 240×240 na SPI1) serve
 quase direto. Trocar pinos (port A: PB6/PB7, D/C PB5, CS PB1), o offset de linha
@@ -92,16 +92,16 @@ quase direto. Trocar pinos (port A: PB6/PB7, D/C PB5, CS PB1), o offset de linha
 **Codec interno do AC791N** (ADC + DAC do bloco `JL_AUDIO`), sem codec externo:
 
 - `JL_AUDIO` (`0x12F00`): o app acessa `DAC_CON` (`+0x00`) e `ADC_CON` (`+0x40`)
-  e outros registradores do ADC/DAC; driver do SDK em `0x02049800`–`0x0204C200`.
+  e outros registradores do ADC/DAC; driver do SDK em `0x02049920`–`0x0204C320`.
 - `JL_ANA` (`0x11900`, 34 refs): front-end analógico (ganho, seleção de entrada, LDOs).
 - I²S (`ALNK0/1`): nenhum ponteiro de base em tabela; a única função de placa
-  (`0x02029D6C`, chamada pelo init da tela) **solta** os pinos do I²S e zera `CON1`.
+  (`0x02029E8C`, chamada pelo init da tela) **solta** os pinos do I²S e zera `CON1`.
 - I²C (`JL_IIC`, `0x12400`): nunca acessado. Um codec externo precisaria dele.
 - String `linein` presente: entrada da guitarra provavelmente pelo caminho line-in/AUX do ADC.
 
 Implicações: a saída (DAC) já é dominada pelo Felucca (`hal/fm1_audio.h`, mesmo
 chip). **A entrada (ADC) é o ponto novo**: precisamos rastrear as escritas em
-`ADC_CON` e `JL_ANA` do app de fábrica (`0x0204AF4C`, `0x0204B73A`) e replicá-las.
+`ADC_CON` e `JL_ANA` do app de fábrica (`0x0204B06C`, `0x0204B85A`) e replicá-las.
 A especificação de 105 dB de faixa dinâmica é do fabricante, não foi medida.
 
 ## Próximos alvos

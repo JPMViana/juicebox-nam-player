@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-references in a JieLi-objdump listing of app.bin (base 0x02000000).
+"""Cross-references in a JieLi-objdump listing of app.bin (base 0x02000120).
 
   xref.py DIS APP.bin --string screen_task      who loads the address of a string
   xref.py DIS APP.bin --addr 0x2012345          who loads / calls an address
@@ -15,7 +15,7 @@ import bisect
 import re
 from pathlib import Path
 
-BASE = 0x02000000
+BASE = 0x02000120   # app.bin offset 0 (the SPL maps it here; Felucca app.ld)
 LINE = re.compile(r"^\s*([0-9a-f]{7,8}):\s+((?:[0-9a-f]{2} )+)\s*(.*)$")
 TARGET = re.compile(r": ([0-9a-f]+) >")
 
