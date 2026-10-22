@@ -1,0 +1,3 @@
+device STUDIO S+, channel 1, 48000 Hz
+ fmt          gain    rms dBFS  peak dBFS   f0 Hz      THD     THD+N
+ 4 RJ24        1.000     -35.4      -7.5    194.7   87.76 % 1431.78 %

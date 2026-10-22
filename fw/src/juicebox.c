@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.7.2"
+#define JB_VERSION "v0.7.3"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_916"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_917"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_916"
+#define OTA_LOADER_ID "ota-BlackBox_917"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -412,8 +412,8 @@ static void test_screen(void)
         text_at(8u + (i % 5u) * 46u, 30u + (i / 5u) * 22u, DIN_NAME[i], C_DIM, C_BG);
     for (i = 0; i < N_AIN; i++)
         text_at(8, 90u + i * 34u, AIN_NAME[i], C_TEXT, C_BG);
-    text_at(8, 180, "IN L", C_TEXT, C_BG);
-    text_at(8, 196, "IN R", C_TEXT, C_BG);
+    text_at(8, 180, "IN", C_TEXT, C_BG);
+    text_at(8, 196, "OUT", C_TEXT, C_BG);
 }
 
 static void test_draw(uint32_t din, uint32_t din_old, const int32_t *a, const int32_t *a_old, uint32_t first)
@@ -523,7 +523,8 @@ static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
 static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
 static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
-static uint32_t au_peak[2];                       /* |input| peak per channel since the last read */
+static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
+static volatile uint32_t au_clip_in_ev, au_clip_out_ev;   /* clip events, for the screen */
 static uint32_t au_halves, au_late;
 static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (default: the guitar is on L), 2 R */
 static volatile uint8_t snap_req, snap_ready, snap_trig;
@@ -668,19 +669,28 @@ static void audio_service(void)
         }
         int64_t y = (int64_t)x * (int64_t)g >> 16;
         uint32_t ax = (uint32_t)(x < 0 ? -x : x);
-        if (ax > au_peak[i & 1u])
-            au_peak[i & 1u] = ax;
+        if (!(i & 1u) && ax > au_peak[0])
+            au_peak[0] = ax;
         if (ax > au_in_max)
             au_in_max = ax;
-        if (ax >= 0x7FF000u)
+        if (ax >= 0x7F0000u) {                    /* within 0.07 dB of full scale: the ADC is at its limit */
             au_clip_in++;
+            au_clip_in_ev++;
+        }
         if (y > 0x7FFFFF) {
             y = 0x7FFFFF;
             au_clip_out++;
+            au_clip_out_ev++;
         }
         if (y < -0x800000) {
             y = -0x800000;
             au_clip_out++;
+            au_clip_out_ev++;
+        }
+        {
+            uint32_t ay = (uint32_t)(y < 0 ? -y : y);
+            if (ay > au_peak[1])
+                au_peak[1] = ay;
         }
         switch (au_fmt) {                         /* 24-bit sample y -> the DAC word */
         case 0: out[i] = (int32_t)((uint32_t)y << 8); break;
@@ -878,6 +888,9 @@ static void debug_service(void)                   /* our SysEx; anything else st
         au_fmt = (uint8_t)(p[4] % N_FMT);
         au_tone = (uint8_t)(p[5] & 1u);
         au_gain_force = gq == 0x3FFFu ? -1 : (int32_t)(gq << 2);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'R') {
+        ota_frame_done();
+        au_in_max = au_clip_in = au_clip_out = au_us_max = 0;   /* reset the audio statistics */
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'S') {
         static uint8_t msg[64];
         uint32_t st[8], k;
@@ -1057,21 +1070,36 @@ static void jb_main(void)
                 led_dir = -led_dir;
             led_pos += led_dir;
         }
-        if (now - t_meter >= 60u) {               /* input meters */
-            uint32_t ch, w;
+        if (now - t_meter >= 60u) {               /* IN / OUT meters, CLIP held 1 s */
+            static uint32_t clip_until[2], ev_seen[2];
+            static uint8_t clip_shown[2];
+            uint32_t ch, w, ev[2];
             t_meter = now;
+            ev[0] = au_clip_in_ev;
+            ev[1] = au_clip_out_ev;
             for (ch = 0; ch < 2u; ch++) {
-                uint32_t pk = au_peak[ch], lv = 0;
+                uint32_t pk = au_peak[ch], lv = 0, clip;
                 au_peak[ch] = 0;
+                if (ev[ch] != ev_seen[ch]) {
+                    ev_seen[ch] = ev[ch];
+                    clip_until[ch] = now + 1000u;
+                }
+                clip = (int32_t)(clip_until[ch] - now) > 0;
                 while (pk > 64u && lv < 17u) {    /* ~6 dB steps from -102 dBFS */
                     pk >>= 1;
                     lv++;
                 }
                 w = lv * 8u;
+                if (w > 136u)
+                    w = 136u;
                 if (w)
-                    lcd_fill(56, 184u + ch * 16u, w, 8, lv >= 16u ? C_ERR : lv >= 13u ? C_WARN : C_OK);
+                    lcd_fill(56, 184u + ch * 16u, w, 8, clip ? C_ERR : lv >= 15u ? C_WARN : C_OK);
                 if (w < 136u)
                     lcd_fill(56u + w, 184u + ch * 16u, 136u - w, 8, RGB(40, 40, 46));
+                if (clip != clip_shown[ch]) {
+                    clip_shown[ch] = (uint8_t)clip;
+                    text_at(196, 180u + ch * 16u, "CLIP", clip ? C_ERR : C_BG, C_BG);
+                }
             }
         }
         if (now - t_scan >= 5u) {                 /* inputs every 5 ms, ADC every 15 ms */
