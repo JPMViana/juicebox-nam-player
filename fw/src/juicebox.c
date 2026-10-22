@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.2.2"
+#define JB_VERSION "v0.2.3"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_906"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_907"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_906"
+#define OTA_LOADER_ID "ota-BlackBox_907"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -354,14 +354,30 @@ static void ota_commit(const uint8_t *parm);
 
 #define BOOTGUARD_MAGIC 0x41524D41u              /* "ARMA" */
 static struct {
-    uint32_t magic, pending, failed, rescues, boots;
+    uint32_t magic, pending, failed, rescues, boots, check;
 } bootguard __attribute__((section(".noinit")));
 
 /* where a boot got to (RAM that survives warm resets): logged by the next boot */
 static struct {
-    uint32_t magic, stage, ms, loops;
+    uint32_t magic, stage, ms, loops, check;
 } crumb __attribute__((section(".noinit")));
-#define STAGE(n) (crumb.stage = (n))
+
+/* The SRAM keeps (decaying) contents across a short power-off on the switch: v0.1.2 read a stale
+ * bootguard as "two failed boots" and went to the rescue loader on battery. Both blocks carry a check
+ * word, rewritten with every change; a mismatch is a cold start. */
+#define SEAL_K 0x5A17C3E9u
+static uint32_t bg_sum(void)
+{
+    return bootguard.magic ^ bootguard.pending * 0x9E3779B1u ^ bootguard.failed * 0x85EBCA77u ^
+           bootguard.rescues * 0xC2B2AE3Du ^ bootguard.boots * 0x27D4EB2Fu ^ SEAL_K;
+}
+static uint32_t crumb_sum(void)
+{
+    return crumb.magic ^ crumb.stage * 0x9E3779B1u ^ crumb.ms * 0x85EBCA77u ^ crumb.loops * 0xC2B2AE3Du ^ SEAL_K;
+}
+#define BG_SEAL() (bootguard.check = bg_sum())
+#define CRUMB_SEAL() (crumb.check = crumb_sum())
+#define STAGE(n) (crumb.stage = (n), CRUMB_SEAL())
 
 static void ota_show(uint32_t step, int32_t code)
 {
@@ -383,6 +399,7 @@ static void ota_show(uint32_t step, int32_t code)
 static void ota_commit(const uint8_t *parm)
 {
     bootguard.pending = 0;                        /* intentional reset */
+    BG_SEAL();
     usb_detach();
     fm1_delay_ms(30);
     fm1_enter_update(parm);                       /* RAM record + core reset: the SPL runs the staged loader */
@@ -499,6 +516,7 @@ static void rescue_enter(void)                    /* never returns */
     ota_wr16(parm, ota_crc16(parm + 2, 78, 0));
     bootguard.pending = 0;
     bootguard.rescues++;
+    BG_SEAL();
     if (usb.up)
         usb_detach();
     fm1_delay_ms(30);
@@ -551,6 +569,7 @@ static void jb_main(void)
         uint32_t now = now_ms(), st;
         crumb.ms = now;
         crumb.loops++;
+        CRUMB_SEAL();
         poll();
         debug_service();
         usb_retry(now);
@@ -566,6 +585,7 @@ static void jb_main(void)
         if (bootguard.pending && now - t_boot > 30000u) {
             bootguard.pending = 0;                /* 30 s up: a good boot */
             bootguard.failed = 0;
+            BG_SEAL();
         }
         st = usb.up && usb.config && !usb.suspended ? 2u : 1u;   /* suspended: bus idle, the cable is out */
         if (st != shown) {
@@ -590,8 +610,8 @@ void fm1_cstart(void)
         *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++)
         *d = *s;                                  /* flash driver: runs from RAM */
-    if (bootguard.magic != BOOTGUARD_MAGIC || bootguard.boots > 100000u || bootguard.rescues > 1000u ||
-        bootguard.failed > 16u || bootguard.pending > 1u) {      /* (the update loaders use this RAM too) */
+    if (bootguard.magic != BOOTGUARD_MAGIC || bootguard.check != bg_sum() || bootguard.pending > 1u) {
+        /* cold start, decayed SRAM, or the update loaders used this RAM */
         bootguard.magic = BOOTGUARD_MAGIC;
         bootguard.pending = 0;
         bootguard.failed = 0;
@@ -599,9 +619,13 @@ void fm1_cstart(void)
         bootguard.boots = 0;
     }
     bootguard.boots++;
+    BG_SEAL();
     boot_rec.magic = LOG_MAGIC;
     boot_rec.boots = bootguard.boots;
-    boot_rec.warm = crumb.magic == BOOTGUARD_MAGIC;
+    if (crumb.magic == BOOTGUARD_MAGIC && crumb.check == crumb_sum())
+        boot_rec.warm = 1;
+    else
+        boot_rec.warm = 0;
     boot_rec.prev_stage = boot_rec.warm ? crumb.stage : 0;
     boot_rec.prev_ms = boot_rec.warm ? crumb.ms : 0;
     boot_rec.prev_loops = boot_rec.warm ? crumb.loops : 0;
@@ -615,13 +639,16 @@ void fm1_cstart(void)
     crumb.stage = 2;
     crumb.ms = 0;
     crumb.loops = 0;
+    CRUMB_SEAL();
     if (bootguard.pending)
         bootguard.failed++;
     boot_rec.failed = (uint8_t)bootguard.failed;
     bootguard.pending = 1;
+    BG_SEAL();
     fm1_updata_parm_clear();                      /* no stale update record for the next warm reset */
     if (bootguard.failed >= 2u) {
         bootguard.failed = 0;
+        BG_SEAL();
         if (rescue_staged())
             rescue_enter();
     }

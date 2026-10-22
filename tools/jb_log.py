@@ -28,6 +28,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port")
     ap.add_argument("--last", type=int, default=20)
+    ap.add_argument("--raw", action="store_true", help="also print each record as hex")
     a = ap.parse_args()
     import mido
     names = [n for n in mido.get_input_names() if (a.port.lower() in n.lower() if a.port else PORT_RE.search(n))]
@@ -58,6 +59,8 @@ def main():
     print(" #  boots warm  prev stage       prev ms  prev loops  p3_rst          wdt  failed pend resc")
     for i in sorted(got)[-a.last:]:
         r = got[i]
+        if a.raw:
+            print(f"    raw {r.hex(' ')}")
         magic, boots, pst, pms, plo = struct.unpack_from("<IIIII", r, 0)
         p3, wdt, failed, pend, resc, warm, vers, _ = r[20:28]
         if magic != 0x474C424A:
