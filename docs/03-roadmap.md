@@ -43,7 +43,8 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
 `entrada → gate → NAM A2 → [IR] → volume → saída` (modo power amp = IR desligado).
 
 ## Fase 4 – Firmware próprio (port do Felucca)
-- [ ] Primeiro boot: só USB + update + modo de segurança (nenhum áudio). Gravar, testar, voltar ao V20.
+- [x] **armaria-nam v0.1** (2026-10-22): USB + update + resgate + tela com splash, gravado e rodando ([07](07-firmware-armaria.md))
+- [ ] Testar update a partir do armaria-nam (voltar ao V20 e reinstalar)
 - [ ] Adicionar codec/áudio (passthrough limpo), depois footswitches/LEDs
 - [ ] Tela: identificar o controlador e os pinos (`screen_task` no app de fábrica) e portar o `lcd.c`/`gfx.c` do Felucca
 - [ ] Interface própria: nome do modelo NAM, IR on/off, volume/gain, nível de entrada
