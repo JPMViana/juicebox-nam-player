@@ -1,0 +1,4 @@
+#!/bin/sh
+# xref.py over the V20 listing (analysis/disasm)
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec python3 -I "$ROOT/tools/xref.py" "$ROOT/analysis/disasm/app_v20.dis" "$ROOT/analysis/disasm/app_v20.bin" "$@"

@@ -13,3 +13,4 @@ nam/bench/out/
 build/
 analysis/v019_check/
 analysis/v20_pkg/
+analysis/disasm/
