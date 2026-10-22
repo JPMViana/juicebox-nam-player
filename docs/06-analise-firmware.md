@@ -106,14 +106,17 @@ passo a do Felucca no FM-1 (`hal/fm1_audio.h`), com outros pinos:
 | Habilita o codec | **PA9** | 0 no início, 1 depois que o link roda (como o PC6 do FM-1) |
 
 - `IOMAP_CON5` bits 7:6 = `01` (o FM-1 usa `00`); `CON3 |= 3`; `CLK_CON2 &= ~0xF00`.
-- Taxa **44118 Hz** (`0x01C25758 = 44118`), 24 bits alinhados à esquerda em int32, L/R
-  intercalados; buffers de 1 KB por canal, `LEN = 128` palavras por metade no V20.
+- Taxa **44118 Hz** (`0x01C25758 = 44118`), **24 bits alinhados à DIREITA** em int32 (bits 23..0,
+  bit 23 = sinal, byte de cima 0 — medido com `tools/jb_audio.py`), L/R intercalados; buffers de 1 KB por canal, `LEN = 128` palavras por metade no V20.
 - `CON1`: por canal `ch`, bit `4ch` liga, bit `4ch+2` (sempre), bit `4ch+3` = RX.
   `CON2`: bit `4+ch` = metade concluída, escrever bit `ch` limpa. `CON0` bit 15 = metade em uso.
 - Sem I²C: o codec é configurado por pinos (modelo ainda não identificado; foto da placa
   confirmaria). O bloco `JL_AUDIO` interno é tocado pelo driver do SDK, mas não é o caminho do som.
 
-**Juice-Box v0.4**: passthrough implementado com exatamente essa sequência (`fw/src/juicebox.c`
+**Juice-Box v0.4**: passthrough (lia os dados como alinhados à esquerda → chiado alto; corrigido na v0.5.1).
+Ruído de fundo medido na entrada, parada: **L −91 dBFS rms, R −77 dBFS rms**.
+
+**v0.4**: passthrough implementado com exatamente essa sequência (`fw/src/juicebox.c`
 `audio_start`), metades de 256 palavras (2,9 ms), MASTER = ganho de saída.
 
 ## Controles do painel — **mapeados no pedal** (Juice-Box v0.3, 2026-10-22)

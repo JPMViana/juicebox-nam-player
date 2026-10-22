@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.4"
+#define JB_VERSION "v0.5.1"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_909"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_911"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_909"
+#define OTA_LOADER_ID "ota-BlackBox_911"
 
 #include "fm1_time.h"
 #include "fm1_sys.h"
@@ -450,10 +450,42 @@ static void test_send(uint32_t din, const int32_t *a)
         ota_wire_send(m, n);
 }
 
+/* ------------------------------------------------------------------ LEDs --- */
+/* Button LEDs behind an 8-bit shift register (the stock 0x02005E9C): PC5 clock, PC8 data, PC6 latch,
+ * PC7 high = enabled (the LCD init drives PC7 low first, as stock). 8 bits, first shifted bit first. */
+static void led_write(uint8_t v)
+{
+    uint32_t b;
+    PORT_REG(P_C, R_OUT) &= ~((1u << 6) | (1u << 5));
+    for (b = 0; b < 8u; b++) {
+        if (v & (0x80u >> b))
+            PORT_REG(P_C, R_OUT) |= 1u << 8;
+        else
+            PORT_REG(P_C, R_OUT) &= ~(1u << 8);
+        fm1_delay_us(2);
+        PORT_REG(P_C, R_OUT) |= 1u << 5;
+        fm1_delay_us(2);
+        PORT_REG(P_C, R_OUT) &= ~(1u << 5);
+    }
+    fm1_delay_us(2);
+    PORT_REG(P_C, R_OUT) |= 1u << 6;              /* latch */
+}
+
+static void led_init(void)
+{
+    uint32_t m = (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8);
+    PORT_REG(P_C, R_OUT) |= 1u << 7;
+    PORT_REG(P_C, R_OUT) &= ~((1u << 5) | (1u << 6) | (1u << 8));
+    PORT_REG(P_C, R_DIR) &= ~m;
+    led_write(0);
+}
+
 /* ----------------------------------------------------------------- audio --- */
 /* External codec on ALNK0 (I2S), set up as the stock firmware does (docs/06, 0x02007490):
  * MCLK PA4, SCLK PA5, LRCK PA6, channel 0 = TX (DAC) on PA7, channel 1 = RX (ADC) on PA8, PA9 = codec
- * enable (low, then high once the link runs). ~44118 Hz, 24-bit left-justified in int32, L/R interleaved.
+ * enable (low, then high once the link runs). ~44118 Hz, 24-bit RIGHT-justified in int32 (bits 23..0, bit 23
+ * = sign, top byte 0: measured with tools/jb_audio.py in v0.5; v0.4 read it left-justified = loud hiss),
+ * L/R interleaved.
  * Double-buffered DMA; polled from poll(): CON2 bit 4 + ch = half done, write bit ch to clear;
  * CON0 bit 15 = the half the DMA is in. v0.4: passthrough, MASTER pot = output level. */
 #define ALNK 0x12E00u
@@ -473,6 +505,9 @@ static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
 static uint32_t au_peak[2];                       /* |input| peak per channel since the last read */
 static uint32_t au_halves, au_late;
+static volatile uint8_t au_route;                 /* 0 stereo, 1 L to both, 2 R to both (FX button) */
+static volatile uint8_t snap_req, snap_ready;
+static int32_t snap_buf[AU_HALF] __attribute__((aligned(4)));
 
 static void pa_out(uint32_t pin, uint32_t v)      /* gpio_direction_output */
 {
@@ -557,8 +592,15 @@ static void audio_service(void)
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
     g = au_gain;
+    if (snap_req && !snap_ready) {                /* raw input words for tools/jb_audio.py */
+        for (i = 0; i < AU_HALF; i++)
+            snap_buf[i] = in[i];
+        snap_req = 0;
+        snap_ready = 1;
+    }
     for (i = 0; i < AU_HALF; i++) {
-        int32_t x = in[i] >> 8;                   /* 24-bit sample */
+        uint32_t src = au_route == 0u ? i : au_route == 1u ? (i & ~1u) : (i | 1u);
+        int32_t x = (int32_t)((uint32_t)in[src] << 8) >> 8;   /* sign-extend the 24-bit sample */
         int64_t y = (int64_t)x * (int64_t)g >> 16;
         uint32_t ax = (uint32_t)(x < 0 ? -x : x);
         if (ax > au_peak[i & 1u])
@@ -567,7 +609,7 @@ static void audio_service(void)
             y = 0x7FFFFF;
         if (y < -0x800000)
             y = -0x800000;
-        out[i] = (int32_t)y << 8;
+        out[i] = (int32_t)y;                      /* 24-bit, right-justified */
     }
     ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
 }
@@ -739,7 +781,27 @@ static void debug_service(void)                   /* our SysEx; anything else st
     if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'L') {
         ota_frame_done();
         log_dump();
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'A') {
+        ota_frame_done();
+        snap_ready = 0;
+        snap_req = 1;                             /* the next input half; sent from the main loop */
     }
+}
+
+static void snap_send(void)                       /* F0 7D 'J' 'B' 'A' idx pack7(32 B) F7, idx 0..31, then 7F */
+{
+    static uint8_t msg[64];
+    uint32_t k, n;
+    const uint8_t *b = (const uint8_t *)snap_buf;
+    for (k = 0; k < AU_HALF * 4u / 32u; k++) {
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'A';
+        msg[5] = (uint8_t)k;
+        n = 6u + ota_pack7(b + k * 32u, 32, msg + 6);
+        msg[n++] = 0xF7;
+        ota_wire_send(msg, n);
+    }
+    msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'A'; msg[5] = 0x7F; msg[6] = 0xF7;
+    ota_wire_send(msg, 7);
 }
 
 /* ---------------------------------------------------------------- rescue --- */
@@ -841,10 +903,12 @@ static void jb_main(void)
     inputs_init();
     delay_poll(1500);                             /* the splash, a moment */
     test_screen();
+    led_init();
     audio_start();
     STAGE(9);
     {
-    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, i;
+    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, t_led = 0, i;
+    int32_t led_pos = 0, led_dir = 1;
     int32_t a[N_AIN] = {0}, a_old[N_AIN] = {0};
     for (;;) {
         uint32_t now = now_ms(), st;
@@ -874,6 +938,17 @@ static void jb_main(void)
         if (st != shown) {
             shown = st;
             status(st == 2u ? "USB OK" : "sem USB", st == 2u ? C_OK : C_DIM);
+        }
+        if (snap_ready) {
+            snap_send();
+            snap_ready = 0;
+        }
+        if (now - t_led >= 110u) {                /* LED ping-pong */
+            t_led = now;
+            led_write((uint8_t)(1u << led_pos));
+            if (led_pos + led_dir < 0 || led_pos + led_dir > 7)
+                led_dir = -led_dir;
+            led_pos += led_dir;
         }
         if (now - t_meter >= 60u) {               /* input meters */
             uint32_t ch, w;
@@ -907,6 +982,12 @@ static void jb_main(void)
             if (a[0] >= 0) {                      /* MASTER (PA10) -> output gain, squared curve, 0..1.0 */
                 uint32_t v = (uint32_t)a[0];
                 au_gain = v * v * 65536u / (1023u * 1023u);
+            }
+            if ((din & ~din_old) & (1u << 2)) {   /* FX pressed: next routing */
+                static const char *const RT[] = {"SAIDA: ESTEREO", "SAIDA: L -> L+R", "SAIDA: R -> L+R"};
+                au_route = (uint8_t)((au_route + 1u) % 3u);
+                text_at(8, 4, "                             ", C_HOT, C_BG);
+                text_at(8, 4, RT[au_route], C_HOT, C_BG);
             }
             if (first || changed || din != din_old) {
                 test_draw(din, din_old, a, a_old, first);
