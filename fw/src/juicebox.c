@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.13.20"
+#define JB_VERSION "v0.13.21"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_971"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_972"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_971"
+#define OTA_LOADER_ID "ota-BlackBox_972"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -96,6 +96,9 @@ static uint8_t nam_vlevel = 13u;                  /* SYSVDD level for two cores 
 static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers through the main loop while NAM runs */            /* the crumb's stage (defined with it, below) */
 static void led_pwm_tick(void);
 static uint8_t led_on;
+/* v0.13.21 (JBE m): noise hunt, what the main loop leaves out: 1 = LEDs off (no PWM), 2 = no screen updates
+ * (meters, CPU line), 4 = LEDs all on, static (current without PWM) */
+static volatile uint8_t quiet;
 
 /* v0.13.18: the longest time between two audio_service calls (gap_*), and per main-loop section (loop_at) the
  * longest stretch of its own code between two polls (sec_max; 20 = usb_poll, 21 = the LED PWM tick) */
@@ -2106,6 +2109,17 @@ static void debug_service(void)                   /* our SysEx; anything else st
         k = 5u + ota_pack7((const uint8_t *)st, 48, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'E') {
+        static uint8_t msg[8];
+        uint32_t k;
+        ota_frame_done();
+        quiet = p[4];
+        led_on = !(quiet & 1u);
+        for (k = 0; k < 8u; k++)
+            led_bri[k] = quiet & 4u ? 16u : 0u;
+        led_write(quiet & 1u ? 0xFFu : quiet & 4u ? 0x00u : 0xFFu);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'E'; msg[5] = quiet & 0x7Fu; msg[6] = 0xF7;
+        ota_wire_send(msg, 7);
     } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'W') {
         static uint8_t msg[64];                   /* v0.13.19: p[4] 1 = arm; reply state, count, the buffers, gain */
         uint32_t st[6], k;
@@ -2363,7 +2377,7 @@ static void jb_main(void)
         if (nam_dbg_marks)
             jb_stage(94);
         loop_at = 5;
-        if (now - t_cpu >= 500u) {                /* NAM time per 128-frame block (2902 us available) */
+        if (now - t_cpu >= 500u && !(quiet & 2u)) {                /* NAM time per 128-frame block (2902 us available) */
             static char cl[24];
             t_cpu = now;
             str_cpy(cl, "CPU NAM ....us max ....", sizeof cl);
@@ -2376,7 +2390,7 @@ static void jb_main(void)
             snap_send();
             snap_ready = 0;
         }
-        if (now - t_led >= 120u) {                /* LED ping-pong: a lit ball with a fading trail */
+        if (now - t_led >= 120u && !(quiet & 5u)) {                /* LED ping-pong: a lit ball with a fading trail */
             uint32_t k;
             t_led = now;
             for (k = 0; k < 8u; k++)
@@ -2389,7 +2403,7 @@ static void jb_main(void)
         if (nam_dbg_marks)
             jb_stage(95);
         loop_at = 7;
-        if (now - t_meter >= 60u) {               /* IN / OUT meters, CLIP held 1 s */
+        if (now - t_meter >= 60u && !(quiet & 2u)) {               /* IN / OUT meters, CLIP held 1 s */
             static uint32_t clip_until[2], ev_seen[2];
             static uint8_t clip_shown[2];
             uint32_t ch, w, ev[2];
