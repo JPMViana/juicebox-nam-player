@@ -1,0 +1,4 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+modo 2 (c1 float + c0 inteiro): start=0 rodadas=20 falhas=0 gave_up/bad=0x0
+modo 1 (c1 inteiro + c0 float): start=0 rodadas=20 falhas=0 gave_up/bad=0x0
+modo 3 (c1 float + c0 float): start=0 rodadas=20 falhas=0 gave_up/bad=0x0

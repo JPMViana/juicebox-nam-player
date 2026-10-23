@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.10.2"
+#define JB_VERSION "v0.11.5"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_932"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_940"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_932"
+#define OTA_LOADER_ID "ota-BlackBox_940"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -51,6 +51,8 @@
 #define JB_LOG 0x000B9000u                       /* boot log sector, just below the staged loader */
 #define FL_RANGE_OK(off, n) FL_IN(off, n, JB_LOG, OTA_AREA + OTA_AREA_LEN)
 #include "fm1_flash.h"
+#include "fm1_irq.h"                     /* exception vectors + crash record (Felucca) */
+#define C1_MAIN_SECTION ".text.c1main"
 #include "fm1_cpu1.h"                    /* the second core (Felucca / fm1-x0x / Melodee / Jangada, GPL-3.0) */
 #include "libc.c"
 
@@ -66,6 +68,13 @@ static const uint8_t STR2[] = {20, 3, 'J', 0, 'u', 0, 'i', 0, 'c', 0, 'e', 0, '-
 #include "a2lite.h"
 #include "model_a2lite.h"
 
+/* A core-0 fault: the record (fm1_crash, .noinit) is logged by the next boot */
+static void fm1_fault(const fm1_crash_t *c)
+{
+    (void)c;
+    fm1_reboot();
+}
+
 /* ------------------------------------------------------------------ time --- */
 static uint32_t now_ms(void)                    /* monotonic; survives the TIMER4 wrap */
 {
@@ -79,20 +88,31 @@ static uint32_t now_ms(void)                    /* monotonic; survives the TIMER
 }
 
 static void audio_service(void);
+static void jb_stage(uint32_t n);
+static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers through the main loop while NAM runs */            /* the crumb's stage (defined with it, below) */
 static void led_pwm_tick(void);
 static uint8_t led_on;
 
+static uint32_t poll_stage_ret;                   /* the stage to restore after poll's own markers */
 static void poll(void)                          /* watchdog, USB at ~2 kHz, audio halves, LED PWM */
 {
     audio_service();
+    if (nam_dbg_marks)
+        jb_stage(98);
     if (led_on)
         led_pwm_tick();
+    if (nam_dbg_marks)
+        jb_stage(99);
     static uint32_t last;
     uint32_t now = fm1_ticks();
     fm1_wdt_feed();
     if (usb.up && now - last >= 500u * FM1_TICKS_PER_US) {   /* (rescue checks at boot run before usb_start) */
         last = now;
+        if (nam_dbg_marks)
+            jb_stage(97);
         usb_poll();
+        if (nam_dbg_marks)
+            jb_stage(96);
     }
 }
 
@@ -547,6 +567,9 @@ static struct {
 } pipe;
 static uint32_t pipe_blk;
 static uint8_t pipe_primed;
+static uint8_t pipe_busy;                         /* core 1 still owns a job (never held mid-job: on this chip a
+                                                   * hold during work stalls the bus: USB and the audio DMA stop) */
+static uint32_t pipe_late, pipe_late_max;         /* blocks core 1 was not done in time; the longest wait (us) */
 
 static volatile uint32_t c1_test_out;
 __attribute__((section(".ram_text"), noinline, used)) static void c1_int_job(uint32_t arg)
@@ -735,15 +758,32 @@ static void audio_service(void)
             }
             nin[f] = (float)x * (1.0f / 8388608.0f);
         }
-        if (pipe_primed)
+        jb_stage(80);
+        if (pipe_busy && fm1_c1_mb.done == fm1_c1_mb.job)
+            pipe_busy = 0;                        /* the late job finished meanwhile */
+        if (pipe_primed && !pipe_busy) {
             ran = (uint32_t)fm1_cpu1_run(nam_back_job, prev);       /* core 1: the back half of block n - 1 */
+            pipe_busy = (uint8_t)ran;
+        }
+        jb_stage(81);
         {
             void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
             front(&nam, nin, pipe.lin[slot], pipe.hsum[slot], AU_HALF / 2u);   /* core 0: front of block n */
         }
-        if (ran && fm1_cpu1_wait() != 0) {        /* core 1 misread or stalled: NAM off, direct sound */
-            c1_ok = 0;
-            nam_on = 0;
+        jb_stage(82);
+        if (ran) {                                /* wait up to 1.5 ms more, never hold it */
+            uint32_t w0 = fm1_ticks(), w;
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 1500u * FM1_TICKS_PER_US)
+                FM1_C1_SYNC();
+            w = (fm1_ticks() - w0) / FM1_TICKS_PER_US;
+            if (w > pipe_late_max)
+                pipe_late_max = w;
+            if (fm1_c1_mb.done == fm1_c1_mb.job)
+                pipe_busy = 0;
+            else {
+                pipe_late++;
+                ran = 0;                          /* this block: silence (its back half is not there) */
+            }
         }
         for (f = 0; f < AU_HALF / 2u; f++) {
             float yf = pipe_primed && ran ? pipe.out[prev][f] * gf : 0.0f;
@@ -764,6 +804,7 @@ static void audio_service(void)
                 au_peak[1] = ay;
             out[2u * f] = out[2u * f + 1u] = y;   /* RJ24 */
         }
+        jb_stage(83);
         pipe_primed = 1;
         pipe_blk++;
         nam_us = (fm1_ticks() - t1) / FM1_TICKS_PER_US;
@@ -937,6 +978,7 @@ static uint32_t crumb_sum(void)
 #define BG_SEAL() (bootguard.check = bg_sum())
 #define CRUMB_SEAL() (crumb.check = crumb_sum())
 #define STAGE(n) (crumb.stage = (n), CRUMB_SEAL())
+static void jb_stage(uint32_t n) { STAGE(n); }
 
 static void ota_show(uint32_t step, int32_t code)
 {
@@ -1070,6 +1112,68 @@ static void debug_service(void)                   /* our SysEx; anything else st
         au_on = (uint8_t)sv;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '1';
         k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 14u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'M') {
+        /* RAM peek: F0 7D 'J' 'B' 'M' addr (5 x 7 bits, LSB first) len (5 x 7 bits) F7 -> 64-byte chunks;
+         * only RAM 0x01C00000..0x01C80000 */
+        static uint8_t msg[96];
+        uint32_t a = 0, len = 0, i, k;
+        for (i = 0; i < 5u; i++) {
+            a |= (uint32_t)p[4 + i] << (7u * i);
+            len |= (uint32_t)p[9 + i] << (7u * i);
+        }
+        ota_frame_done();
+        if (a < 0x01C00000u || a + len > 0x01C80000u || len > 4096u)
+            len = 0;
+        for (i = 0; i < len; i += 48u) {
+            uint32_t nb = len - i > 48u ? 48u : len - i;
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'M';
+            msg[5] = (uint8_t)((i / 48u) & 0x7Fu);
+            k = 6u + ota_pack7((const uint8_t *)(uintptr_t)(a + i), nb, msg + 6);
+            msg[k++] = 0xF7;
+            ota_wire_send(msg, k);
+        }
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'M'; msg[5] = 0x7F; msg[6] = 0xF7;
+        ota_wire_send(msg, 7);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'F') {
+        static uint8_t msg[96];
+        uint32_t k;
+        ota_frame_done();
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'F';
+        k = 5u + ota_pack7((const uint8_t *)&fm1_crash, sizeof fm1_crash, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'N') {
+        /* NAM on two cores now: core supply 1.32 V, core 1 started (once), pipeline on */
+        static uint8_t msg[16];
+        uint32_t st[2], k;
+        ota_frame_done();
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_delay_ms(2);
+        if (!c1_ok)
+            c1_ok = fm1_cpu1_start() == 0;
+        pipe_primed = 0;
+        nam_on = nam_ok && c1_ok;
+        nam_dbg_marks = 1;
+        st[0] = c1_ok; st[1] = nam_on;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'N';
+        k = 5u + ota_pack7((const uint8_t *)st, 8, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'V') {
+        /* P33 analog registers 0x00..0x1F; p[4] 1..15 = set SYSVDD_VOL_SEL (P3_ANA_CON9 bits 3..0) to that
+         * level first (0.93 V + 0.03 V x level), 0x7F = read only */
+        static uint8_t msg[64];
+        uint8_t r[32];
+        uint32_t i, k;
+        ota_frame_done();
+        if (p[4] <= 15u)
+            fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | p[4]));
+        for (i = 0; i < 32u; i++)
+            r[i] = fm1_p33_read(i);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'V';
+        k = 5u + ota_pack7(r, 32, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
     } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '5') {
@@ -1258,8 +1362,8 @@ static void debug_service(void)                   /* our SysEx; anything else st
         static uint8_t msg[64];
         uint32_t st[8], k;
         ota_frame_done();
-        st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = au_clip_in;
-        st[4] = au_clip_out; st[5] = au_us_max; st[6] = nam_us; st[7] = nam_us_max;
+        st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = pipe_late;
+        st[4] = pipe_late_max; st[5] = au_us_max; st[6] = nam_us; st[7] = nam_us_max;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
         k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
         msg[k++] = 0xF7;
@@ -1356,6 +1460,18 @@ static void jb_main(void)
     STAGE(4);
     if (flash_ok)
         log_write();
+    if (flash_ok && fm1_crash.magic == FM1_CRASH_MAGIC) {   /* the last run faulted: one more record */
+        boot_rec.magic = 0x52434A42u;             /* "BJCR" */
+        boot_rec.boots = fm1_crash.vec | fm1_crash.core << 16;
+        boot_rec.prev_stage = fm1_crash.pc;
+        boot_rec.prev_ms = fm1_crash.rets;
+        boot_rec.prev_loops = fm1_crash.sp;
+        boot_rec.rst_src = fm1_crash.emu;
+        boot_rec.p3_rst = (uint8_t)fm1_crash.count;
+        boot_rec.wdt_con = (uint8_t)(fm1_crash.dbg & 0xFFu);
+        log_write();
+        fm1_crash.magic = 0;
+    }
     STAGE(5);
 
     lcd_init();                                   /* 2. the screen */
@@ -1384,8 +1500,10 @@ static void jb_main(void)
     test_screen();
     text_at(8, 4, "NAM: carregando...", C_HOT, C_BG);
     nam_ok = a2l_load(&nam, MODEL_A2LITE, A2L_NWEIGHTS, nam_ring) == 0;   /* (prewarm: ~6300 samples) */
-    c1_ok = 0;                                    /* v0.10.1: core 1 off (v0.10: a failed hand-over stalled USB and
-                                                   * the audio DMA); NAM off: passthrough */
+    /* Two cores need a higher core supply on this board: at the default SYSVDD 1.26 V a busy core 1 makes the
+     * chip misbehave (v0.10.x: hangs, brown-out-like resets, USB / audio DMA stalls); 1.32 V (SYSVDD_VOL_SEL 13,
+     * P3_ANA_CON9 bits 3..0; the SDK's own range goes to 1.38 V) ran every JB5 load clean. */
+    c1_ok = 0;                                    /* v0.11.1: NAM (two cores) only on JBN, to find what breaks it */
     nam_on = 0;
     text_at(8, 4, "                             ", C_HOT, C_BG);
     text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM A2-Lite: ON",
@@ -1403,12 +1521,20 @@ static void jb_main(void)
         crumb.ms = now;
         crumb.loops++;
         CRUMB_SEAL();
+        if (nam_dbg_marks)
+            jb_stage(90);
         poll();
+        if (nam_dbg_marks)
+            jb_stage(91);
         debug_service();
+        if (nam_dbg_marks)
+            jb_stage(92);
         usb_retry(now);
         if (usb.uboot_req)                        /* the stock soft key: no UBOOT here (no Mac recovery) */
             usb.uboot_req = 0;
         ota_service();                            /* M-UPGRADE handshake */
+        if (nam_dbg_marks)
+            jb_stage(93);
         if (usb.ota_req) {
             usb.ota_req = 0;
             audio_stop();                         /* no buzz while the flash is busy */
@@ -1433,6 +1559,8 @@ static void jb_main(void)
             shown = st;
             status(st == 2u ? "USB OK" : "sem USB", st == 2u ? C_OK : C_DIM);
         }
+        if (nam_dbg_marks)
+            jb_stage(94);
         if (now - t_cpu >= 500u) {                /* NAM time per 128-frame block (2902 us available) */
             static char cl[24];
             t_cpu = now;
@@ -1455,6 +1583,8 @@ static void jb_main(void)
                 led_dir = -led_dir;
             led_pos += led_dir;
         }
+        if (nam_dbg_marks)
+            jb_stage(95);
         if (now - t_meter >= 60u) {               /* IN / OUT meters, CLIP held 1 s */
             static uint32_t clip_until[2], ev_seen[2];
             static uint8_t clip_shown[2];
@@ -1547,6 +1677,8 @@ void fm1_cstart(void)
         *d = *s;                                  /* flash driver, NAM kernel: run from RAM */
     for (s = _c1_load, d = _c1_start; d < _c1_end; s++, d++)
         *d = *s;                                  /* the second core's waiting loop */
+    fm1_irq_init();                               /* every vector -> the crash record; only the CPU exception on */
+    fm1_irq_enable_all();
     if (bootguard.magic != BOOTGUARD_MAGIC || bootguard.check != bg_sum() || bootguard.pending > 1u) {
         /* cold start, decayed SRAM, or the update loaders used this RAM */
         bootguard.magic = BOOTGUARD_MAGIC;

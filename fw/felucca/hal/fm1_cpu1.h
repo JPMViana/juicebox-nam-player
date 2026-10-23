@@ -57,7 +57,13 @@ static uint32_t fm1_c1_wait_max;                /* the longest wait for a job, T
 static uint8_t fm1_c1_marked;                   /* its stack was marked (fm1_cpu1_start): fm1_cpu1_stack_used 0 before */
 
 void fm1_c1_main(void);
-void __attribute__((section(".c1_text"), noreturn, used)) fm1_c1_main(void)
+/* Juice-Box: core 1's waiting loop runs from XIP, not RAM (C1_MAIN_SECTION): on the BlackBox both cores
+ * executing RAM code at once locks the chip up (v0.9.x / v0.10.x probes). The flash is only switched off for
+ * writes, and core 1 is held before any (juicebox.c). */
+#ifndef C1_MAIN_SECTION
+#define C1_MAIN_SECTION ".c1_text"
+#endif
+void __attribute__((section(C1_MAIN_SECTION), noreturn, used)) fm1_c1_main(void)
 {
     /* its own guards, as Melodee sets them (its fm1_core1_main): a stack limit in core 1's EMU bank
      * (core 0's is at 0x1EEF0D0) over both its stacks less the lowest 256 bytes, and EMU_CON bit 2

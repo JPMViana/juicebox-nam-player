@@ -1,0 +1,30 @@
+== SYSVDD nível 14
+P3_ANA_CON9 = 0x1e -> SYSVDD nivel 14 = 1.35 V
+JBN (c1_ok, nam_on): (1, 1)
++5s: sem resposta
++10s: blocos 1428  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++15s: blocos 3172  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++20s: blocos 4915  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++25s: blocos 6658  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++30s: blocos 8402  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++35s: blocos 10146  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++40s: blocos 11889  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++45s: blocos 13633  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++50s: blocos 15377  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++55s: blocos 17121  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++60s: blocos 18866  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
+== SYSVDD nível 15
+P3_ANA_CON9 = 0x1f -> SYSVDD nivel 15 = 1.38 V
+JBN (c1_ok, nam_on): (1, 1)
++5s: sem resposta
++10s: sem resposta
++15s: sem resposta
++20s: sem resposta
++25s: sem resposta
++30s: sem resposta
++35s: sem resposta
++40s: sem resposta
++45s: sem resposta
++50s: sem resposta
++55s: sem resposta
++60s: sem resposta

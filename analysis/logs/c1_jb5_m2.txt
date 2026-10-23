@@ -1,0 +1,1 @@
+modo 2 (c1 float + c0 inteiro): SEM RESPOSTA (travou)

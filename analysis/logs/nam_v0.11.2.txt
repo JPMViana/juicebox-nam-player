@@ -1,0 +1,7 @@
+JBN (c1_ok, nam_on): (1, 1)
++5s: sem resposta
++10s: blocos 670  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++15s: blocos 2414  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++20s: blocos 4157  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++25s: blocos 5900  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++30s: blocos 7643  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)

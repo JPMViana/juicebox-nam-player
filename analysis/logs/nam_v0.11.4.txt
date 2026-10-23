@@ -1,0 +1,12 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
++5s: sem resposta
++10s: sem resposta
++15s: sem resposta
++20s: sem resposta
+no answer
+no answer (is it running Juice-Box v0.2 or later?)
+libc++abi: terminating due to unexpected exception of type RtMidiError: MidiInCore::initialize: error creating OS-X MIDI client object (-304).
+no answer (is it running Juice-Box v0.2 or later?)
+libc++abi: terminating due to unexpected exception of type RtMidiError: MidiInCore::initialize: error creating OS-X MIDI client object (-304).
+no answer (is it running Juice-Box v0.2 or later?)

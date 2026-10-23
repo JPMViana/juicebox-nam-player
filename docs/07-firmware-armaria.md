@@ -35,6 +35,21 @@ com `tools/bb_install.py`).
 - Próximos passos: (a) testar JB5 modos 2/3 e a carga real com inteiros nos dois núcleos;
   (b) kernel otimizado em assembly num núcleo; (c) se (a) passar, NAM em ponto fixo nos dois núcleos.
 
+## v0.11.x (2026-10-23) — segundo núcleo: conclusão
+
+- **Tensão do núcleo**: SYSVDD padrão 1,26 V (`P3_ANA_CON9` = nível 11). Com 1,32 V (nível 13) as cargas
+  curtas de dois núcleos (JB5, só registradores) passam; com 1,26 V travam. 1,35/1,38 V não resolvem o resto.
+- **Laço de espera do núcleo 1 na flash** (não na RAM): necessário (RAM + RAM trava o chip).
+- **JB2** (pipeline real do NAM, 10 blocos, sem áudio/USB): **2386 us/bloco < 2902** — cabe.
+- **Uso real contínuo** (v0.11.x): após 20–60 s o núcleo 0 reinicia ou o USB morre; o registro de falha
+  em `.noinit` aparece inteiro com `0x7F800001` (NaN em float): escritas fora dos limites, coerente com
+  o "core 1 lê palavras erradas sob carga" documentado pelo Felucca/Jangada.
+- O firmware de fábrica usa **um núcleo** (`CPU_CORE_NUM 1`) e o Felucca deixa o segundo desligado por padrão.
+- **Decisão**: voltar a um núcleo; buscar o desempenho com clock 360 MHz (o `isd_config` do BlackBox pede
+  360 MHz; recalcular divisores de áudio/USB) + kernel em assembly.
+- Ferramentas novas: `tools/jb_volt.py` (P33/SYSVDD), `tools/jb_nam_on.py`, `tools/jb_crash.py` (registro de
+  falha, vetores do Felucca), `tools/jb_peek.py` (leitura de RAM).
+
 ## v0.2.x (2026-10-22) — Juice-Box, gravado e rodando (v0.2.2 = `BlackBox_906`)
 
 - Novo nome e logo (jarra de suco), "por João Viana" na tela de abertura; USB:

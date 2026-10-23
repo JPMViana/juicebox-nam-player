@@ -62,8 +62,9 @@ def main():
        "-o", rel(OUT / "juicebox.o"))
     tc("clang", "-c", rel(FW / "felucca" / "crt0.S"), "-o", rel(OUT / "crt0.o"))
     tc("clang", "-c", rel(FW / "felucca" / "hal" / "fm1_cpu1.S"), "-o", rel(OUT / "fm1_cpu1.o"))
+    tc("clang", "-c", rel(FW / "felucca" / "hal" / "fm1_vec.S"), "-o", rel(OUT / "fm1_vec.o"))
     elf = OUT / "juicebox.elf"
-    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "bench_dev.o"), "-o", rel(elf))
+    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "fm1_vec.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "bench_dev.o"), "-o", rel(elf))
     for sect, name in ((".text", "text.bin"), (".ram_text", "ramtext.bin"), (".c1_text", "c1text.bin"), (".data", "data.bin")):
         (OUT / name).unlink(missing_ok=True)
         tc("common/bin/objcopy", "-O", "binary", "-j", sect, rel(elf), rel(OUT / name))

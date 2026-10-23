@@ -1,0 +1,3 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
+total NaN: 0

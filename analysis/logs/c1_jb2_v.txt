@@ -1,0 +1,2 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JB2: start=0 feitos=10 bloco max=2386us espera c1 max=6us falhas=0 gave_up/bad=0x0

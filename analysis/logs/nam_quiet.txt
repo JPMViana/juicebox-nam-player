@@ -1,0 +1,6 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
+== silêncio USB 60 s
++5s: blocos 18111  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
++10s: blocos 19855  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
+sem falha registrada magic=0x7f800001 count=0x7f800001 vec=0x7f800001 pc=0x7f800001 rets=0x7f800001 emu=0x7f800001 dbg=0x7f800001 sp=0x7f800001 psr=0x7f800001 icfg=0x7f800001 uptime_ms=0x7f800001 etm0=0x7f800001 etm1=0x7f800001 etm2=0x7f800001 etm3=0x7f800001 early=0x7f800001 core=0x7f800001

@@ -17,7 +17,7 @@ from bb_install import PORT_RE, unpack7   # noqa: E402
 
 STAGES = {0: "-", 2: "cstart", 3: "usb_start", 4: "flash id", 5: "log", 6: "lcd init", 7: "splash",
           8: "rescue check", 9: "main loop", 40: "JB2 start", 41: "JB2 bloco", 42: "JB2 run c1",
-          43: "JB2 front ok", 44: "JB2 wait ok", 45: "JB2 fim", 49: "JB3 c0 ok", 51: "JB3 f1+f0", 52: "JB3 f1+i0", 53: "JB3 i1+f0", 54: "JB3 i1+i0", 59: "JB4 c0 ok", 61: "JB4 c1xip+c0ram", 62: "JB4 c1ram+c0xip", 63: "JB4 c1xip+c0xip", 69: "JB5 c0 ok", 71: "JB5 i1+f0", 72: "JB5 f1+i0", 73: "JB5 f1+f0"}
+          43: "JB2 front ok", 44: "JB2 wait ok", 45: "JB2 fim", 49: "JB3 c0 ok", 51: "JB3 f1+f0", 52: "JB3 f1+i0", 53: "JB3 i1+f0", 54: "JB3 i1+i0", 59: "JB4 c0 ok", 61: "JB4 c1xip+c0ram", 62: "JB4 c1ram+c0xip", 63: "JB4 c1xip+c0xip", 69: "JB5 c0 ok", 71: "JB5 i1+f0", 72: "JB5 f1+i0", 73: "JB5 f1+f0", 80: "NAM antes run", 81: "NAM run ok", 82: "NAM front ok", 83: "NAM wait ok", 90: "loop: topo", 91: "loop: poll ok", 92: "loop: debug ok", 93: "loop: ota ok", 94: "loop: antes cpu", 95: "loop: antes medidores", 96: "poll: usb ok", 97: "poll: antes usb", 98: "poll: audio ok", 99: "poll: led ok"}
 P3_RST = ["power-on", "VDDIO low", "WDT", "VCM", "long press", "1.2 V", "soft (P33)"]
 
 
@@ -64,6 +64,12 @@ def main():
             print(f"    raw {r.hex(' ')}")
         magic, boots, pst, pms, plo = struct.unpack_from("<IIIII", r, 0)
         p3, wdt, failed, pend, resc, warm, vers, _ = r[20:28]
+        if magic == 0x52434A42:
+            vec, core = boots & 0xFFFF, boots >> 16
+            emu = struct.unpack_from("<I", r, 28)[0]
+            print(f"{i:2d}  FALHA núcleo {core}: vetor {vec}  PC {pst:#010x}  RETS {pms:#010x}  SP {plo:#010x}  "
+                  f"EMU {emu:#010x}  DBG {wdt:#04x}  #{p3}")
+            continue
         if magic != 0x474C424A:
             print(f"{i:2d}  (bad record {r.hex()})")
             continue
