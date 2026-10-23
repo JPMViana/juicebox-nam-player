@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.13.11"
+#define JB_VERSION "v0.13.18"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_965"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_969"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_965"
+#define OTA_LOADER_ID "ota-BlackBox_969"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -97,13 +97,42 @@ static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers thro
 static void led_pwm_tick(void);
 static uint8_t led_on;
 
+/* v0.13.18: the longest time between two audio_service calls (gap_*), and per main-loop section (loop_at) the
+ * longest stretch of its own code between two polls (sec_max; 20 = usb_poll, 21 = the LED PWM tick) */
+static volatile uint8_t loop_at, gap_at;
+static uint32_t gap_last, gap_max, gap_long, poll_out;
+static uint16_t sec_max[24];
+static void sec_note(uint32_t k, uint32_t t0)
+{
+    uint32_t us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+    if (us > 0xFFFFu)
+        us = 0xFFFFu;
+    if (us > sec_max[k])
+        sec_max[k] = (uint16_t)us;
+}
 static void poll(void)                          /* watchdog, USB at ~2 kHz, audio halves, LED PWM */
 {
+    uint32_t g0 = fm1_ticks(), gu;
+    if (poll_out)
+        sec_note(loop_at % 24u, poll_out);
+    if (gap_last) {
+        gu = (g0 - gap_last) / FM1_TICKS_PER_US;
+        if (gu > 400u)
+            gap_long++;
+        if (gu > gap_max) {
+            gap_max = gu;
+            gap_at = loop_at;
+        }
+    }
     audio_service();
+    gap_last = fm1_ticks();
     if (nam_dbg_marks)
         jb_stage(98);
-    if (led_on)
+    if (led_on) {
+        uint32_t t = fm1_ticks();
         led_pwm_tick();
+        sec_note(21, t);
+    }
     if (nam_dbg_marks)
         jb_stage(99);
     static uint32_t last;
@@ -114,9 +143,11 @@ static void poll(void)                          /* watchdog, USB at ~2 kHz, audi
         if (nam_dbg_marks)
             jb_stage(97);
         usb_poll();
+        sec_note(20, now);
         if (nam_dbg_marks)
             jb_stage(96);
     }
+    poll_out = fm1_ticks();
 }
 
 static void delay_poll(uint32_t ms)
@@ -323,8 +354,8 @@ static void status(const char *s, uint16_t fg)
             lcd_buf[2 * i + 1] = (uint8_t)c;
         }
         lcd_data(lcd_buf, n * 16u);
+        poll();                                   /* v0.13.18: per row, as lcd_fill */
     }
-    poll();
 }
 
 static void hex(char *d, uint32_t v, uint32_t digits)
@@ -351,6 +382,7 @@ static void text_at(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t
             lcd_buf[2 * i + 1] = (uint8_t)c;
         }
         lcd_data(lcd_buf, n * 16u);
+        poll();                                   /* v0.13.18: a whole line between two polls made outputs late */
     }
 }
 
@@ -398,6 +430,25 @@ static uint32_t din_read(void)                    /* bit i = 1: pressed (pin low
         if (!(PORT_REG(DIN[i][0], R_IN) & (1u << DIN[i][1])))
             v |= 1u << i;
     return v;
+}
+
+/* v0.13.18: adc_read split in two for the main loop: a conversion is started on one 5 ms scan and read on the
+ * next (the three blocking reads every 15 ms held the audio for ~670 us: late NAM outputs) */
+static void adc_start(uint32_t ch)
+{
+    ADC_CON = 0;
+    if (WLA_CON0 & (1u << 14))
+        WLA_CON0 &= ~(1u << 14);
+    ADC_CON = 0xF04Eu | ((ch & 0xFu) << 8);
+    ADC_CON |= 0x10u;
+    ADC_CON |= 0x40u;
+}
+static int32_t adc_take(void)                     /* the started conversion, -1 if it is not done */
+{
+    uint32_t done = ADC_CON & 0x80u, v = ADC_RES & 0x3FFu;
+    ADC_CON = 0x40u;
+    ADC_CON = 0;
+    return done ? (int32_t)v : -1;
 }
 
 static int32_t adc_read(uint32_t ch)              /* 0..1023, -1 on timeout (Felucca fm1_adc_read) */
@@ -550,10 +601,11 @@ static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
 static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
 static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
-#define NAM_OUT_TRIM 0.25f                        /* v0.13.13: NAM output -12 dB (first guess for a power amp; tune by ear) */
+#define NAM_OUT_TRIM 2.63f                        /* v0.13.18: +8.4 dB, the model's loudness (-26.4 dB) up to -18 dB as
+                                                   * the NAM plugin normalizes (v0.13.13's -12 dB was far too quiet) */
 static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
 static volatile uint32_t au_clip_in_ev, au_clip_out_ev;   /* clip events, for the screen */
-static uint32_t au_halves, au_late;
+static uint32_t au_halves, au_late, au_out_late;   /* au_out_late: halves whose output was written too late */
 static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (default: the guitar is on L), 2 R */
 static volatile uint8_t snap_req, snap_ready, snap_trig;
 static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
@@ -571,7 +623,7 @@ static struct {
     a2l_t in[2][AU_HALF / 2u], lin[2][AU_HALF / 2u * A2L_C], hsum[2][AU_HALF / 2u * A2L_C], out[2][AU_HALF / 2u];
     a2lq_t qin[2][AU_HALF / 2u], qlin[2][AU_HALF / 2u * A2L_C], qhs[2][AU_HALF / 2u * A2L_C], qout[2][AU_HALF / 2u];
 } pipe __attribute__((section(".c1_bss.pipe")));
-static uint32_t pipe_blk;
+static uint32_t pipe_blk, pipe_job_blk;          /* the block number; the block core 1's job is for */
 static uint8_t pipe_primed;
 static uint8_t pipe_busy;                         /* core 1 still owns a job (never held mid-job: on this chip a
                                                    * hold during work stalls the bus: USB and the audio DMA stop) */
@@ -977,6 +1029,10 @@ static void audio_service(void)
             au_late++;                            /* (counts polls that saw only one of them) */
         return;
     }
+    ALNK_CON2 |= 0x03u;                           /* v0.13.18: clear the pendings now, not after the work: a half
+                                                   * that ends while this one is processed is then seen next poll
+                                                   * (cleared at the end, it was lost and au_h flipped: 14 % of the
+                                                   * halves at 2.7 ms of NAM per 2.9 ms block) */
     au_halves++;
     t0 = fm1_ticks();
     au_b15[(ALNK_CON0 >> 15) & 1u]++;
@@ -1003,32 +1059,27 @@ static void audio_service(void)
             }
             nin[f] = (float)x * (1.0f / 8388608.0f);
         }
-        jb_stage(80);
-        if (pipe_busy && fm1_c1_mb.done == fm1_c1_mb.job)
-            pipe_busy = 0;                        /* the late job finished meanwhile */
-        if (pipe_primed && !pipe_busy) {
-            ran = (uint32_t)fm1_cpu1_run(nam_back_job, prev);       /* core 1: the back half of block n - 1 */
-            pipe_busy = (uint8_t)ran;
-        }
         jb_stage(81);
         nam_front_slot(slot);                     /* core 0: front of block n */
         jb_stage(82);
-        if (ran) {                                /* wait up to 1.5 ms more, never hold it */
+        if (pipe_busy) {                          /* core 1's back of block n - 1, started at the end of the last
+                                                   * call: it has had a whole block, so this rarely waits */
             uint32_t w0 = fm1_ticks(), w;
             while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 1500u * FM1_TICKS_PER_US)
                 FM1_C1_SYNC();
             w = (fm1_ticks() - w0) / FM1_TICKS_PER_US;
             if (w > pipe_late_max)
                 pipe_late_max = w;
-            if (fm1_c1_mb.done == fm1_c1_mb.job)
+            if (fm1_c1_mb.done == fm1_c1_mb.job) {
                 pipe_busy = 0;
-            else {
-                pipe_late++;
-                ran = 0;                          /* this block: silence (its back half is not there) */
-            }
+                ran = pipe_job_blk + 1u == pipe_blk;
+            } else
+                pipe_late++;                      /* this block: silence (its back half is not there) */
         }
+        if ((ALNK_CON2 & 0x30u) == 0x30u)
+            au_out_late++;                        /* the DMA already finished the next half: this output is late */
         for (f = 0; f < AU_HALF / 2u; f++) {
-            float yf = pipe_primed && ran ? (float)pipe.qout[prev][f] * (gf * (1.0f / 8388608.0f)) : 0.0f;
+            float yf = ran ? (float)pipe.qout[prev][f] * (gf * (1.0f / 8388608.0f)) : 0.0f;
             int32_t y;
             uint32_t ay;
             if (yf > 8388607.0f) {
@@ -1045,6 +1096,12 @@ static void audio_service(void)
             if (ay > au_peak[1])
                 au_peak[1] = ay;
             out[2u * f] = out[2u * f + 1u] = y;   /* RJ24 */
+        }
+        if (!pipe_busy && fm1_cpu1_run(nam_back_job, slot)) {   /* v0.13.18: core 1 starts block n's back now,
+                                                   * not at the start of the next call: core 0 no longer waits
+                                                   * for it, and the output is written ~250 us earlier */
+            pipe_busy = 1;
+            pipe_job_blk = pipe_blk;
         }
         jb_stage(83);
         pipe_primed = 1;
@@ -1135,7 +1192,6 @@ static void audio_service(void)
         }
     }
 done:
-    ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
     if (us > au_us_max)
         au_us_max = us;
@@ -1996,14 +2052,27 @@ static void debug_service(void)                   /* our SysEx; anything else st
         au_in_max = au_clip_in = au_clip_out = au_us_max = 0;   /* reset the audio statistics */
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'S') {
         static uint8_t msg[64];
-        uint32_t st[8], k;
+        uint32_t st[12], k;
         ota_frame_done();
+        st[8] = au_out_late;
+        st[9] = gap_max; st[10] = gap_long; st[11] = gap_at;
+        gap_max = 0;
         st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = pipe_late;
         st[4] = pipe_late_max; st[5] = au_us_max; st[6] = nam_us; st[7] = nam_us_max;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
-        k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
+        k = 5u + ota_pack7((const uint8_t *)st, 48, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'G') {
+        static uint8_t msg[64];                   /* v0.13.18: sec_max[24] (uint16, us), then cleared */
+        uint32_t k, i;
+        ota_frame_done();
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'G';
+        k = 5u + ota_pack7((const uint8_t *)sec_max, 48, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+        for (i = 0; i < 24u; i++)
+            sec_max[i] = 0;
     }
 }
 
@@ -2179,7 +2248,7 @@ static void jb_main(void)
     nam_start();                                  /* v0.13.17: NAM on at boot again (stable since VDC14 = 1.50 V) */
     STAGE(9);
     {
-    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, t_led = 0, t_cpu = 0, i;
+    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_meter = 0, t_led = 0, t_cpu = 0, i, adc_i = 0, adc_busy = 0;
     int32_t led_pos = 0, led_dir = 1;
     int32_t a[N_AIN] = {0}, a_old[N_AIN] = {0};
     for (;;) {
@@ -2189,15 +2258,19 @@ static void jb_main(void)
         CRUMB_SEAL();
         if (nam_dbg_marks)
             jb_stage(90);
+        loop_at = 0;
         poll();
         if (nam_dbg_marks)
             jb_stage(91);
+        loop_at = 1;
         debug_service();
         if (nam_dbg_marks)
             jb_stage(92);
+        loop_at = 2;
         usb_retry(now);
         if (usb.uboot_req)                        /* the stock soft key: no UBOOT here (no Mac recovery) */
             usb.uboot_req = 0;
+        loop_at = 3;
         ota_service();                            /* M-UPGRADE handshake */
         if (nam_dbg_marks)
             jb_stage(93);
@@ -2206,6 +2279,10 @@ static void jb_main(void)
             audio_stop();                         /* no buzz while the flash is busy */
             if (c1_ok) {                          /* the flash driver runs from RAM: core 1 must not run RAM
                                                    * code then (its idle loop is RAM): hold it (NAM off until reboot) */
+                uint32_t w0 = fm1_ticks();        /* v0.13.18: never mid-job (it now runs between the calls too) */
+                while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
+                    FM1_C1_SYNC();
+                pipe_busy = 0;
                 fm1_cpu1_hold();
                 c1_ok = 0;
                 nam_on = 0;
@@ -2220,6 +2297,7 @@ static void jb_main(void)
             bootguard.failed = 0;
             BG_SEAL();
         }
+        loop_at = 4;
         st = usb.up && usb.config && !usb.suspended ? 2u : 1u;   /* suspended: bus idle, the cable is out */
         if (st != shown) {
             shown = st;
@@ -2227,6 +2305,7 @@ static void jb_main(void)
         }
         if (nam_dbg_marks)
             jb_stage(94);
+        loop_at = 5;
         if (now - t_cpu >= 500u) {                /* NAM time per 128-frame block (2902 us available) */
             static char cl[24];
             t_cpu = now;
@@ -2235,6 +2314,7 @@ static void jb_main(void)
             dec4(cl + 19, (int32_t)nam_us_max);
             text_at(8, 160, cl, C_TEXT, C_BG);
         }
+        loop_at = 6;
         if (snap_ready) {
             snap_send();
             snap_ready = 0;
@@ -2251,6 +2331,7 @@ static void jb_main(void)
         }
         if (nam_dbg_marks)
             jb_stage(95);
+        loop_at = 7;
         if (now - t_meter >= 60u) {               /* IN / OUT meters, CLIP held 1 s */
             static uint32_t clip_until[2], ev_seen[2];
             static uint8_t clip_shown[2];
@@ -2283,18 +2364,20 @@ static void jb_main(void)
                 }
             }
         }
+        loop_at = 8;
         if (now - t_scan >= 5u) {                 /* inputs every 5 ms, ADC every 15 ms */
             uint32_t changed = 0;
             t_scan = now;
             din = din_read();
-            if (now - t_adc >= 15u) {
-                t_adc = now;
-                for (i = 0; i < N_AIN; i++) {
-                    a[i] = adc_read(AIN[i][2]);
-                    if (first || a[i] - a_old[i] > 6 || a_old[i] - a[i] > 6)
-                        changed = 1;
-                }
+            if (adc_busy) {                       /* one channel per scan: each read every 15 ms, as before */
+                a[adc_i] = adc_take();
+                if (first || a[adc_i] - a_old[adc_i] > 6 || a_old[adc_i] - a[adc_i] > 6)
+                    changed = 1;
+                adc_i = (adc_i + 1u) % N_AIN;
             }
+            adc_start(AIN[adc_i][2]);
+            adc_busy = 1;
+            loop_at = 10;                         /* (10: after the ADC) */
             if (au_gain_force >= 0)
                 au_gain = (uint32_t)au_gain_force;
             else if (a[0] >= 0) {                 /* MASTER (PA10) -> output gain, squared curve, 0..1.0 */
@@ -2312,6 +2395,7 @@ static void jb_main(void)
                 text_at(8, 4, "                             ", C_HOT, C_BG);
                 text_at(8, 4, RT[au_route], C_HOT, C_BG);
             }
+            loop_at = 9;
             if (first || changed || din != din_old) {
                 test_draw(din, din_old, a, a_old, first);
                 test_send(din, a);
