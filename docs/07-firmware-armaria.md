@@ -4,6 +4,29 @@ Nome: **Juice-Box**, por **João Viana** (até a v0.1.2: armaria-nam). Identidad
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
+## v0.8 – v0.10 (2026-10-22/23) — NAM A2-Lite no pedal
+
+- `nam/a2lite.c`: A2-Lite em C, **idêntico ao NeuralAmpModelerCore oficial** (diferença máx. 5e-7,
+  `nam/test/a2lite_host.c` contra `render --slim 0.2`; atenção: `--slim 0.5` seleciona o Full).
+- Desempenho medido no pedal (240 MHz — o mesmo clock do firmware de fábrica):
+
+  | Versão | Tempo por bloco de 128 amostras (limite 2902 us) |
+  |---|---|
+  | v0.8 (frame-major, máscara por acesso) | 5792 us |
+  | v0.8.2 (tap-major, ring espelhado) | 4736 us |
+  | v0.8.3 (kernel na RAM) | 4888 us (sem ganho) |
+
+- Microbenchmarks (`JBP`): float mul+add 4,75 ciclos/MAC no laço real; Q31 com acumulador 64 bits
+  5,3–5,6 (mais lento); a FPU **tem** MAC (`r0 += r1 * r2 (f)`, o compilador não emite), mas ele não
+  tem pipeline: 3,2 ciclos; mul e add separados entram em pipeline (1,9 ciclos/par).
+- **Segundo núcleo (Felucca `fm1_cpu1.h`):** liga e roda tarefas de inteiro e float isoladas (`JB1`), mas:
+  - os dois núcleos executando **código da RAM** ao mesmo tempo **travam o chip** (`JB2`, `JB3`, todos os modos);
+  - os dois executando da **flash** com laços de inteiros: ok (`JB4` modo 3);
+  - v0.10: NAM em pipeline com os dois núcleos na flash (float nos dois) → o núcleo 1 falha, o
+    fallback o segura, **e o USB e o DMA de áudio param** (núcleo 0 segue vivo: tela, LEDs, ADC).
+    Recuperado religando o pedal e gravando a v0.10.1 no instante em que o USB respondeu.
+- **v0.10.1 (atual)**: segundo núcleo e NAM desligados (passthrough), para seguirmos com segurança.
+
 ## v0.2.x (2026-10-22) — Juice-Box, gravado e rodando (v0.2.2 = `BlackBox_906`)
 
 - Novo nome e logo (jarra de suco), "por João Viana" na tela de abertura; USB:

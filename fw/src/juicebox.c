@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.7.3"
+#define JB_VERSION "v0.10.1"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_917"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_931"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,13 +43,15 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_917"
+#define OTA_LOADER_ID "ota-BlackBox_931"
 
+#define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
 #include "fm1_sys.h"
 #define JB_LOG 0x000B9000u                       /* boot log sector, just below the staged loader */
 #define FL_RANGE_OK(off, n) FL_IN(off, n, JB_LOG, OTA_AREA + OTA_AREA_LEN)
 #include "fm1_flash.h"
+#include "fm1_cpu1.h"                    /* the second core (Felucca / fm1-x0x / Melodee / Jangada, GPL-3.0) */
 #include "libc.c"
 
 #define USB_STRINGS_DEFINED
@@ -61,6 +63,8 @@ static const uint8_t STR2[] = {20, 3, 'J', 0, 'u', 0, 'i', 0, 'c', 0, 'e', 0, '-
 #include "splash.h"
 #include "font.h"
 #include "loader.h"
+#include "a2lite.h"
+#include "model_a2lite.h"
 
 /* ------------------------------------------------------------------ time --- */
 static uint32_t now_ms(void)                    /* monotonic; survives the TIMER4 wrap */
@@ -531,6 +535,69 @@ static volatile uint8_t snap_req, snap_ready, snap_trig;
 static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
 /* v0.7 output diagnostics: MOD = guitar / 440 Hz test tone; AMP = the DAC word format */
 static volatile uint8_t au_tone, au_fmt = 4;      /* RJ24: measured right (tools/jb_measure.py, v0.7.1) */
+/* NAM A2-Lite (nam/a2lite.c) on the guitar (L) input; MOD toggles it */
+static struct a2l nam;
+static a2l_t nam_ring[A2L_RING_FRAMES * A2L_C] __attribute__((section(".pool")));
+static volatile uint8_t nam_ok, nam_on, c1_ok;
+static uint32_t nam_us, nam_us_max;
+/* Two-core pipeline: core 0 runs a2l_front on block n while core 1 runs a2l_back on block n - 1 (one
+ * block of extra latency, 2.9 ms). Slot n & 1 holds block n's input and the front's lin / hsum. */
+static struct {
+    a2l_t in[2][AU_HALF / 2u], lin[2][AU_HALF / 2u * A2L_C], hsum[2][AU_HALF / 2u * A2L_C], out[2][AU_HALF / 2u];
+} pipe;
+static uint32_t pipe_blk;
+static uint8_t pipe_primed;
+
+static volatile uint32_t c1_test_out;
+__attribute__((section(".ram_text"), noinline, used)) static void c1_int_job(uint32_t arg)
+{
+    c1_test_out = arg * 3u + 1u;
+}
+__attribute__((section(".ram_text"), noinline, used)) static void c1_float_job(uint32_t arg)
+{
+    volatile float a = (float)arg, b = 0.5f;
+    union { float f; uint32_t u; } r;
+    r.f = a * b + 1.25f;
+    c1_test_out = r.u;
+}
+
+/* JB3 loads: register-only work for about n iterations (no shared memory writes but the result) */
+__attribute__((section(".ram_text"), noinline, used)) static void c1_fload(uint32_t n)
+{
+    float a = 1.0f, b = 0.999f, c = 0.001f, d = 0.5f;
+    while (n--) {
+        a = a * b + c;
+        d = d * b + a;
+    }
+    { union { float f; uint32_t u; } r; r.f = a + d; c1_test_out = r.u; }
+}
+__attribute__((section(".ram_text"), noinline, used)) static void c1_iload(uint32_t n)
+{
+    uint32_t a = 1, b = 7;
+    while (n--) {
+        a = a * 1664525u + 1013904223u;
+        b ^= a >> 3;
+    }
+    c1_test_out = a ^ b;
+}
+
+/* the same integer load in XIP flash (normal .text) */
+__attribute__((noinline, used)) static void x_iload(uint32_t n)
+{
+    uint32_t a = 1, b = 7;
+    while (n--) {
+        a = a * 1664525u + 1013904223u;
+        b ^= a >> 3;
+    }
+    c1_test_out = a ^ b;
+}
+
+/* XIP, not RAM: both cores executing RAM code at the same time lock the chip up (JB2 / JB3 / JB4, v0.9.x);
+ * XIP on both is fine (core 1's idle loop stays in RAM, .c1_text, as in Felucca) */
+__attribute__((noinline, used)) static void nam_back_job(uint32_t slot)
+{
+    a2l_back(&nam, pipe.in[slot], pipe.lin[slot], pipe.hsum[slot], pipe.out[slot], AU_HALF / 2u);
+}
 static uint32_t au_h, au_b15[2];                  /* software half index; CON0 bit 15 histogram (diagnostic) */
 static volatile int32_t au_gain_force = -1;      /* >= 0: USB-set Q16 gain overrides MASTER (JBC) */
 static uint32_t au_phase;
@@ -639,6 +706,79 @@ static void audio_service(void)
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
     g = au_gain;
+    if (nam_on && nam_ok && c1_ok) {              /* guitar (L) -> A2-Lite (two cores) -> both outputs */
+        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f;
+        const uint32_t slot = pipe_blk & 1u, prev = slot ^ 1u;
+        uint32_t t1 = fm1_ticks(), f, ran = 0;
+        a2l_t *nin = pipe.in[slot];
+        for (f = 0; f < AU_HALF / 2u; f++) {
+            int32_t x = (int32_t)((uint32_t)in[2u * f] << 8) >> 8;
+            uint32_t ax = (uint32_t)(x < 0 ? -x : x);
+            if (ax > au_peak[0])
+                au_peak[0] = ax;
+            if (ax > au_in_max)
+                au_in_max = ax;
+            if (ax >= 0x7F0000u) {
+                au_clip_in++;
+                au_clip_in_ev++;
+            }
+            nin[f] = (float)x * (1.0f / 8388608.0f);
+        }
+        if (pipe_primed)
+            ran = (uint32_t)fm1_cpu1_run(nam_back_job, prev);       /* core 1: the back half of block n - 1 */
+        {
+            void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+            front(&nam, nin, pipe.lin[slot], pipe.hsum[slot], AU_HALF / 2u);   /* core 0: front of block n */
+        }
+        if (ran && fm1_cpu1_wait() != 0) {        /* core 1 misread or stalled: NAM off, direct sound */
+            c1_ok = 0;
+            nam_on = 0;
+        }
+        for (f = 0; f < AU_HALF / 2u; f++) {
+            float yf = pipe_primed && ran ? pipe.out[prev][f] * gf : 0.0f;
+            int32_t y;
+            uint32_t ay;
+            if (yf > 8388607.0f) {
+                yf = 8388607.0f;
+                au_clip_out++;
+                au_clip_out_ev++;
+            } else if (yf < -8388608.0f) {
+                yf = -8388608.0f;
+                au_clip_out++;
+                au_clip_out_ev++;
+            }
+            y = (int32_t)yf;
+            ay = (uint32_t)(y < 0 ? -y : y);
+            if (ay > au_peak[1])
+                au_peak[1] = ay;
+            out[2u * f] = out[2u * f + 1u] = y;   /* RJ24 */
+        }
+        pipe_primed = 1;
+        pipe_blk++;
+        nam_us = (fm1_ticks() - t1) / FM1_TICKS_PER_US;
+        if (nam_us > nam_us_max)
+            nam_us_max = nam_us;
+        goto done;
+    }
+    pipe_primed = 0;
+    if (nam_on && nam_ok && !c1_ok && 0) {        /* one core: too slow for real time (kept for reference) */
+        static a2l_t nin[AU_HALF / 2u], nout[AU_HALF / 2u];
+        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f;
+        uint32_t t1 = fm1_ticks(), f;
+        void (*volatile run)(struct a2l *, const a2l_t *, a2l_t *, uint32_t) = a2l_process;
+        for (f = 0; f < AU_HALF / 2u; f++)
+            nin[f] = (float)((int32_t)((uint32_t)in[2u * f] << 8) >> 8) * (1.0f / 8388608.0f);
+        run(&nam, nin, nout, AU_HALF / 2u);
+        for (f = 0; f < AU_HALF / 2u; f++) {
+            float yf = nout[f] * gf;
+            yf = yf > 8388607.0f ? 8388607.0f : yf < -8388608.0f ? -8388608.0f : yf;
+            out[2u * f] = out[2u * f + 1u] = (int32_t)yf;
+        }
+        nam_us = (fm1_ticks() - t1) / FM1_TICKS_PER_US;
+        if (nam_us > nam_us_max)
+            nam_us_max = nam_us;
+        goto done;
+    }
     if (snap_trig && !snap_ready) {               /* armed: capture the first loud half */
         uint32_t pk = 0;
         for (i = 0; i < AU_HALF; i += 2u) {
@@ -700,6 +840,7 @@ static void audio_service(void)
         default: out[i] = (int32_t)y; break;
         }
     }
+done:
     ALNK_CON2 |= 0x03u;                           /* clear channel 0 and 1 pendings */
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
     if (us > au_us_max)
@@ -864,6 +1005,16 @@ static void log_dump(void)                        /* every record as F0 7D 'J' '
     ota_wire_send(msg, 7);
 }
 
+/* CPU clock probe: 200000 iterations of a fixed loop timed with TIMER4 (24 MHz); the loop's
+ * instruction count is read from the disassembly (build/fw/juicebox.dis, clk_loop) */
+static __attribute__((noinline)) uint32_t clk_loop(uint32_t n)
+{
+    uint32_t t0 = fm1_ticks();
+    while (n--)
+        __asm__ volatile("nop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop" ::: "memory");
+    return fm1_ticks() - t0;
+}
+
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
 {
     const uint8_t *p;
@@ -888,6 +1039,177 @@ static void debug_service(void)                   /* our SysEx; anything else st
         au_fmt = (uint8_t)(p[4] % N_FMT);
         au_tone = (uint8_t)(p[5] & 1u);
         au_gain_force = gq == 0x3FFFu ? -1 : (int32_t)(gq << 2);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '1') {
+        /* core 1 test: start, an integer job, a float job (each with Felucca's 4 ms timeout) */
+        static uint8_t msg[64];
+        uint32_t st[8], k, sv = au_on;
+        ota_frame_done();
+        au_on = 0;
+        st[0] = (uint32_t)fm1_cpu1_start();      /* 0 = running */
+        st[1] = fm1_c1_trace;
+        c1_test_out = 0;
+        st[2] = fm1_cpu1_run(c1_int_job, 7u) ? (uint32_t)fm1_cpu1_wait() : 0xEEu;
+        st[3] = c1_test_out;                      /* 22 expected */
+        c1_test_out = 0;
+        st[4] = fm1_c1_on ? (fm1_cpu1_run(c1_float_job, 7u) ? (uint32_t)fm1_cpu1_wait() : 0xEEu) : 0xDDu;
+        st[5] = c1_test_out;                      /* 4.75f = 0x40980000 expected */
+        st[6] = fm1_c1_gave_up | fm1_c1_mb.bad << 8;
+        st[7] = *(volatile uint32_t *)0x1C07F20u; /* core 0's icfg as the SPL handed it over (crt0) */
+        fm1_cpu1_hold();
+        au_on = (uint8_t)sv;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '1';
+        k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '4') {
+        /* where the code runs, mode p[4]: 1 = c1 XIP + c0 RAM, 2 = c1 RAM + c0 XIP, 3 = c1 XIP + c0 XIP;
+         * integer loads, 20 rounds; crumb stage 60 + mode while both run */
+        static uint8_t msg[32];
+        uint32_t st[4], k, r, mode = p[4], sv = au_on, fails = 0;
+        void (*volatile c0ram)(uint32_t) = c1_iload, (*volatile c0xip)(uint32_t) = x_iload;
+        ota_frame_done();
+        au_on = 0;
+        st[0] = (uint32_t)fm1_cpu1_start();
+        for (r = 0; r < 20u && !st[0]; r++) {
+            int ran = fm1_cpu1_run(mode == 2u ? c1_iload : x_iload, 100000u);
+            STAGE(60 + mode);
+            if (mode == 1u)
+                c0ram(100000u);
+            else
+                c0xip(100000u);
+            STAGE(59);
+            if (ran && fm1_cpu1_wait() != 0)
+                fails++;
+            fm1_wdt_feed();
+        }
+        st[1] = r; st[2] = fails; st[3] = fm1_c1_gave_up | fm1_c1_mb.bad << 8;
+        fm1_cpu1_hold();
+        au_on = (uint8_t)sv;
+        STAGE(9);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '4';
+        k = 5u + ota_pack7((const uint8_t *)st, 16, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '3') {
+        /* concurrency probe, mode p[4]: 1 = c1 float + c0 float, 2 = c1 float + c0 int, 3 = c1 int + c0 float,
+         * 4 = c1 int + c0 int; 20 rounds of ~2 ms each; crumb stage 50 + mode while both run */
+        static uint8_t msg[32];
+        uint32_t st[4], k, r, mode = p[4], sv = au_on, fails = 0;
+        void (*volatile c0f)(uint32_t) = c1_fload, (*volatile c0i)(uint32_t) = c1_iload;
+        ota_frame_done();
+        au_on = 0;
+        st[0] = (uint32_t)fm1_cpu1_start();
+        for (r = 0; r < 20u && !st[0]; r++) {
+            int ran = fm1_cpu1_run(mode <= 2u ? c1_fload : c1_iload, 100000u);
+            STAGE(50 + mode);
+            if (mode == 1u || mode == 3u)
+                c0f(100000u);
+            else
+                c0i(100000u);
+            STAGE(49);
+            if (ran && fm1_cpu1_wait() != 0)
+                fails++;
+            fm1_wdt_feed();
+        }
+        st[1] = r; st[2] = fails; st[3] = fm1_c1_gave_up | fm1_c1_mb.bad << 8;
+        fm1_cpu1_hold();
+        au_on = (uint8_t)sv;
+        STAGE(9);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '3';
+        k = 5u + ota_pack7((const uint8_t *)st, 16, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '2') {
+        /* the two-core pipeline on a synthetic signal, p[4] x 10 blocks, audio paused; the crumb stage
+         * (40 + step) shows in the next boot's log if it hangs */
+        static uint8_t msg[64];
+        uint32_t st[8], k, b, nb = (uint32_t)p[4] * 10u, sv = au_on, t, tmax = 0, wmax = 0, fails = 0;
+        void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+        float acc = 0;
+        ota_frame_done();
+        au_on = 0;
+        STAGE(40);
+        st[0] = (uint32_t)fm1_cpu1_start();
+        for (b = 0; b < nb && !st[0]; b++) {
+            uint32_t slot = b & 1u, prev = slot ^ 1u, f, ran = 0;
+            for (f = 0; f < AU_HALF / 2u; f++)
+                pipe.in[slot][f] = 0.3f * (float)((int32_t)((b * 128u + f) % 100u) - 50) / 50.0f;
+            t = fm1_ticks();
+            STAGE(41);
+            if (b)
+                ran = (uint32_t)fm1_cpu1_run(nam_back_job, prev);
+            STAGE(42);
+            front(&nam, pipe.in[slot], pipe.lin[slot], pipe.hsum[slot], AU_HALF / 2u);
+            STAGE(43);
+            if (ran) {
+                uint32_t w0 = fm1_ticks();
+                if (fm1_cpu1_wait() != 0) {
+                    fails++;
+                    break;
+                }
+                if (fm1_ticks() - w0 > wmax)
+                    wmax = fm1_ticks() - w0;
+                acc += pipe.out[prev][5];
+            }
+            STAGE(44);
+            t = fm1_ticks() - t;
+            if (t > tmax)
+                tmax = t;
+            fm1_wdt_feed();
+        }
+        STAGE(45);
+        st[1] = b; st[2] = tmax / FM1_TICKS_PER_US; st[3] = wmax / FM1_TICKS_PER_US; st[4] = fails;
+        st[5] = fm1_c1_gave_up | fm1_c1_mb.bad << 8;
+        { union { float f; uint32_t u; } cv; cv.f = acc; st[6] = cv.u; }
+        st[7] = fm1_c1_wait_max / FM1_TICKS_PER_US;
+        fm1_cpu1_hold();
+        au_on = (uint8_t)sv;
+        STAGE(9);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '2';
+        k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'P') {
+        /* microbenchmarks (nam/bench_dev.c): 100 x (128 frames x 9 MACs) each, TIMER4 ticks */
+        extern uint32_t bench_f32(uint32_t, const float *), bench_q31(uint32_t, const int32_t *),
+            bench_q31h(uint32_t, const int32_t *), bench_fmac(uint32_t, const float *), fmac_check(void),
+            bench_lat(float, float), bench_thr(float, float), bench_muladd(float, float);
+        static const float wf[9] = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
+        static const int32_t wq[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+        static uint8_t msg[80];
+        uint32_t st[9], k, t, sv = au_on;
+        ota_frame_done();
+        au_on = 0;                                /* (the audio would steal time) */
+        t = fm1_ticks(); st[3] = bench_f32(100, wf); st[0] = fm1_ticks() - t;
+        t = fm1_ticks(); st[3] += bench_q31(100, wq); st[1] = fm1_ticks() - t;
+        t = fm1_ticks(); st[3] += bench_q31h(100, wq); st[2] = fm1_ticks() - t;
+        t = fm1_ticks(); st[3] += bench_fmac(100, wf); st[4] = fm1_ticks() - t;
+        st[5] = fmac_check();
+        t = fm1_ticks(); st[3] += bench_lat(1.0001f, 0.5f); st[6] = fm1_ticks() - t;
+        t = fm1_ticks(); st[3] += bench_thr(1.0001f, 0.5f); st[7] = fm1_ticks() - t;
+        t = fm1_ticks(); st[3] += bench_muladd(1.0001f, 0.5f); st[8] = fm1_ticks() - t;
+        au_on = (uint8_t)sv;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'P';
+        k = 5u + ota_pack7((const uint8_t *)st, 36, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'K') {
+        static uint8_t msg[96];
+        uint32_t st[16], k;
+        ota_frame_done();
+        st[0] = clk_loop(200000u);
+        st[1] = *(volatile uint32_t *)0x16A00u; st[2] = *(volatile uint32_t *)0x16A04u;
+        st[3] = *(volatile uint32_t *)0x16A08u; st[4] = *(volatile uint32_t *)0x16A0Cu;
+        st[5] = *(volatile uint32_t *)0x10000u; st[6] = *(volatile uint32_t *)0x10004u;
+        st[7] = *(volatile uint32_t *)0x10008u; st[8] = *(volatile uint32_t *)0x1000Cu;
+        st[9] = *(volatile uint32_t *)0x10010u; st[10] = *(volatile uint32_t *)0x10014u;
+        st[11] = *(volatile uint32_t *)0x40404u; st[12] = *(volatile uint32_t *)0x4040Cu;
+        st[13] = *(volatile uint32_t *)0x119A0u; st[14] = *(volatile uint32_t *)0x1EEF0F4u;
+        st[15] = nam_us;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'K';
+        k = 5u + ota_pack7((const uint8_t *)st, 64, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'R') {
         ota_frame_done();
         au_in_max = au_clip_in = au_clip_out = au_us_max = 0;   /* reset the audio statistics */
@@ -896,7 +1218,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
         uint32_t st[8], k;
         ota_frame_done();
         st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = au_clip_in;
-        st[4] = au_clip_out; st[5] = au_us_max; st[6] = au_b15[0]; st[7] = au_b15[1];
+        st[4] = au_clip_out; st[5] = au_us_max; st[6] = nam_us; st[7] = nam_us_max;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
         k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
         msg[k++] = 0xF7;
@@ -977,7 +1299,7 @@ static void rescue_enter(void)                    /* never returns */
 
 /* ------------------------------------------------------------------ main --- */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
-extern uint32_t _rt_start[], _rt_end[], _rt_load[], _pool_start[], _pool_end[];
+extern uint32_t _rt_start[], _rt_end[], _rt_load[], _pool_start[], _pool_end[], _c1_start[], _c1_end[], _c1_load[];
 
 static void jb_main(void)
 {
@@ -1019,12 +1341,20 @@ static void jb_main(void)
     inputs_init();
     delay_poll(1500);                             /* the splash, a moment */
     test_screen();
+    text_at(8, 4, "NAM: carregando...", C_HOT, C_BG);
+    nam_ok = a2l_load(&nam, MODEL_A2LITE, A2L_NWEIGHTS, nam_ring) == 0;   /* (prewarm: ~6300 samples) */
+    c1_ok = 0;                                    /* v0.10.1: core 1 off (v0.10: a failed hand-over stalled USB and
+                                                   * the audio DMA); NAM off: passthrough */
+    nam_on = 0;
+    text_at(8, 4, "                             ", C_HOT, C_BG);
+    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM A2-Lite: ON",
+            nam_on ? C_HOT : C_ERR, C_BG);
     led_init();
     led_on = 1;
     audio_start();
     STAGE(9);
     {
-    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, t_led = 0, i;
+    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, t_led = 0, t_cpu = 0, i;
     int32_t led_pos = 0, led_dir = 1;
     int32_t a[N_AIN] = {0}, a_old[N_AIN] = {0};
     for (;;) {
@@ -1041,6 +1371,12 @@ static void jb_main(void)
         if (usb.ota_req) {
             usb.ota_req = 0;
             audio_stop();                         /* no buzz while the flash is busy */
+            if (c1_ok) {                          /* the flash driver runs from RAM: core 1 must not run RAM
+                                                   * code then (its idle loop is RAM): hold it (NAM off until reboot) */
+                fm1_cpu1_hold();
+                c1_ok = 0;
+                nam_on = 0;
+            }
             if (flash_ok)
                 ota_session();                    /* returns only if nothing was committed */
             audio_start();
@@ -1055,6 +1391,14 @@ static void jb_main(void)
         if (st != shown) {
             shown = st;
             status(st == 2u ? "USB OK" : "sem USB", st == 2u ? C_OK : C_DIM);
+        }
+        if (now - t_cpu >= 500u) {                /* NAM time per 128-frame block (2902 us available) */
+            static char cl[24];
+            t_cpu = now;
+            str_cpy(cl, "CPU NAM ....us max ....", sizeof cl);
+            dec4(cl + 8, (int32_t)nam_us);
+            dec4(cl + 19, (int32_t)nam_us_max);
+            text_at(8, 160, cl, C_TEXT, C_BG);
         }
         if (snap_ready) {
             snap_send();
@@ -1120,15 +1464,10 @@ static void jb_main(void)
                 uint32_t v = (uint32_t)a[0];
                 au_gain = v * v * 65536u / (1023u * 1023u);
             }
-            if ((din & ~din_old) & (1u << 3)) {   /* AMP: next DAC format */
-                au_fmt = (uint8_t)((au_fmt + 1u) % N_FMT);
+            if (((din & ~din_old) & (1u << 4)) && nam_ok && c1_ok) {   /* MOD: NAM on / off (A/B) */
+                nam_on ^= 1u;
                 text_at(8, 4, "                             ", C_HOT, C_BG);
-                text_at(8, 4, FMT_NAME[au_fmt], C_HOT, C_BG);
-            }
-            if ((din & ~din_old) & (1u << 4)) {   /* MOD: guitar / test tone */
-                au_tone ^= 1u;
-                text_at(8, 4, "                             ", C_HOT, C_BG);
-                text_at(8, 4, au_tone ? "FONTE: TOM 440 Hz" : "FONTE: GUITARRA", C_HOT, C_BG);
+                text_at(8, 4, nam_on ? "NAM A2-Lite: ON" : "NAM: OFF (direto)", C_HOT, C_BG);
             }
             if ((din & ~din_old) & (1u << 2)) {   /* FX pressed: next routing */
                 static const char *const RT[] = {"SAIDA: ESTEREO", "SAIDA: L -> L+R", "SAIDA: R -> L+R"};
@@ -1152,6 +1491,8 @@ static void jb_main(void)
 void fm1_cstart(void)
 {
     uint32_t *s, *d;
+    fm1_cpu1_halt();                              /* a core 1 still running from before this reset would read the
+                                                   * RAM cleared below */
     fm1_time_init();
     fm1_reset_reason();                           /* before the watchdog is re-armed (shown at boot) */
     fm1_wdt_arm(0x0D);                            /* ~8 s; fed by poll() */
@@ -1162,7 +1503,9 @@ void fm1_cstart(void)
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++)
         *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++)
-        *d = *s;                                  /* flash driver: runs from RAM */
+        *d = *s;                                  /* flash driver, NAM kernel: run from RAM */
+    for (s = _c1_load, d = _c1_start; d < _c1_end; s++, d++)
+        *d = *s;                                  /* the second core's waiting loop */
     if (bootguard.magic != BOOTGUARD_MAGIC || bootguard.check != bg_sum() || bootguard.pending > 1u) {
         /* cold start, decayed SRAM, or the update loaders used this RAM */
         bootguard.magic = BOOTGUARD_MAGIC;

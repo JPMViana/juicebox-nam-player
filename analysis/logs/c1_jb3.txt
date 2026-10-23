@@ -1,0 +1,4 @@
+modo 4 (c1 inteiro + c0 inteiro): TRAVOU
+modo 2 (c1 float + c0 inteiro): TRAVOU
+modo 3 (c1 inteiro + c0 float): TRAVOU
+modo 1 (c1 float + c0 float): TRAVOU

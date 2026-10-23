@@ -1,0 +1,4 @@
+start: 0  trace: 0xc1000002
+job inteiro: wait=0 resultado=22 (esperado 22)
+job float:   wait=0x0 resultado=0x40980000 (esperado 0x40980000 = 4.75)
+gave_up/bad: 0x0   icfg do núcleo 0: 0x2050500

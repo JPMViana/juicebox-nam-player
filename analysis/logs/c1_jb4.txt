@@ -1,0 +1,3 @@
+modo 3 (c1 flash + c0 flash): OK, rodadas=20 falhas=0 gave_up/bad=0x0
+modo 1 (c1 flash + c0 RAM): OK, rodadas=0 falhas=0 gave_up/bad=0x1500
+modo 2 (c1 RAM + c0 flash): OK, rodadas=0 falhas=0 gave_up/bad=0x1500

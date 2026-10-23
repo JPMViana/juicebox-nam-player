@@ -16,7 +16,8 @@ sys.path.insert(0, __import__("os").path.dirname(__file__))
 from bb_install import PORT_RE, unpack7   # noqa: E402
 
 STAGES = {0: "-", 2: "cstart", 3: "usb_start", 4: "flash id", 5: "log", 6: "lcd init", 7: "splash",
-          8: "rescue check", 9: "main loop"}
+          8: "rescue check", 9: "main loop", 40: "JB2 start", 41: "JB2 bloco", 42: "JB2 run c1",
+          43: "JB2 front ok", 44: "JB2 wait ok", 45: "JB2 fim", 49: "JB3 c0 ok", 51: "JB3 f1+f0", 52: "JB3 f1+i0", 53: "JB3 i1+f0", 54: "JB3 i1+i0", 59: "JB4 c0 ok", 61: "JB4 c1xip+c0ram", 62: "JB4 c1ram+c0xip", 63: "JB4 c1xip+c0xip"}
 P3_RST = ["power-on", "VDDIO low", "WDT", "VCM", "long press", "1.2 V", "soft (P33)"]
 
 

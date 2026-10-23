@@ -21,7 +21,10 @@ PKG = ROOT / "analysis" / "v20_pkg"
 CC = ROOT / "scripts" / "pi32cc.sh"
 APP_XIP = 0x02000120
 APP_SLOT = 0xA0160                       # stock app.bin size: bbpkg keeps the slot sizes
-CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-function"]
+CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-function", "-mcpu=r3", "-mfprev1"]
+NAMFLAGS = ["-O2", "-fno-builtin", "-Wall", "-mcpu=r3", "-mfprev1"]   # (A2L_HOT empty: the kernel runs from XIP; v0.9 found
+# that both cores executing RAM code at once lock the chip up, while XIP + XIP is fine)   # the NAM kernel: speed, hardware float
+MODEL = ROOT / "reference" / "NeuralAmpModelerCore" / "example_models" / "A2.nam"
 
 
 def tc(*args, capture=False):
@@ -50,13 +53,18 @@ def main():
     subprocess.run([sys.executable, FW / "tools" / "gen_assets.py", gen, "--loader", PKG / "ota.bin",
                     "--png", OUT / "splash_preview.png"], check=True)
 
-    inc = ["-I", rel(FW / "felucca" / "hal"), "-I", rel(FW / "felucca" / "src"), "-I", rel(gen)]
+    subprocess.run([sys.executable, ROOT / "tools" / "nam2c.py", MODEL, "--header", gen / "model_a2lite.h",
+                    "--name", "MODEL_A2LITE"], check=True)
+    inc = ["-I", rel(FW / "felucca" / "hal"), "-I", rel(FW / "felucca" / "src"), "-I", rel(gen), "-I", rel(ROOT / "nam")]
+    tc("clang", *NAMFLAGS, "-c", rel(ROOT / "nam" / "a2lite.c"), "-o", rel(OUT / "a2lite.o"))
+    tc("clang", "-O2", "-fno-builtin", "-mcpu=r3", "-mfprev1", "-c", rel(ROOT / "nam" / "bench_dev.c"), "-o", rel(OUT / "bench_dev.o"))
     tc("clang", *CFLAGS, *inc, f'-DFELUCCA_ID="{a.product}"', "-c", rel(FW / "src" / "juicebox.c"),
        "-o", rel(OUT / "juicebox.o"))
     tc("clang", "-c", rel(FW / "felucca" / "crt0.S"), "-o", rel(OUT / "crt0.o"))
+    tc("clang", "-c", rel(FW / "felucca" / "hal" / "fm1_cpu1.S"), "-o", rel(OUT / "fm1_cpu1.o"))
     elf = OUT / "juicebox.elf"
-    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "juicebox.o"), "-o", rel(elf))
-    for sect, name in ((".text", "text.bin"), (".ram_text", "ramtext.bin"), (".data", "data.bin")):
+    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "bench_dev.o"), "-o", rel(elf))
+    for sect, name in ((".text", "text.bin"), (".ram_text", "ramtext.bin"), (".c1_text", "c1text.bin"), (".data", "data.bin")):
         (OUT / name).unlink(missing_ok=True)
         tc("common/bin/objcopy", "-O", "binary", "-j", sect, rel(elf), rel(OUT / name))
     syms = tc("common/bin/objdump", "-t", rel(elf))
@@ -72,7 +80,7 @@ def main():
     img = bytearray((OUT / "text.bin").read_bytes())
     if img[:4] != bytes.fromhex("0481") and img[:2] != b"\x04\x81":
         print(f"warning: first instruction {img[:4].hex()} (the SPL expects `goto +4; rts`)")
-    for name, lname in (("ramtext.bin", "_rt_load"), ("data.bin", "_data_load")):
+    for name, lname in (("ramtext.bin", "_rt_load"), ("c1text.bin", "_c1_load"), ("data.bin", "_data_load")):
         blob = (OUT / name).read_bytes() if (OUT / name).exists() else b""
         if not blob:
             continue
