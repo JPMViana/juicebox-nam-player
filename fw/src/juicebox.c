@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.10.1"
+#define JB_VERSION "v0.10.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_931"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_932"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_931"
+#define OTA_LOADER_ID "ota-BlackBox_932"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -581,6 +581,17 @@ __attribute__((section(".ram_text"), noinline, used)) static void c1_iload(uint3
     c1_test_out = a ^ b;
 }
 
+/* float register load in XIP flash */
+__attribute__((noinline, used)) static void x_fload(uint32_t n)
+{
+    float a = 1.0f, b = 0.999f, c = 0.001f, d = 0.5f;
+    while (n--) {
+        a = a * b + c;
+        d = d * b + a;
+    }
+    { union { float f; uint32_t u; } r; r.f = a + d; c1_test_out = r.u; }
+}
+
 /* the same integer load in XIP flash (normal .text) */
 __attribute__((noinline, used)) static void x_iload(uint32_t n)
 {
@@ -1059,6 +1070,36 @@ static void debug_service(void)                   /* our SysEx; anything else st
         au_on = (uint8_t)sv;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '1';
         k = 5u + ota_pack7((const uint8_t *)st, 32, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '5') {
+        /* FPU sharing, all code in XIP, register-only loads, mode p[4]: 1 = c1 int + c0 float,
+         * 2 = c1 float + c0 int, 3 = c1 float + c0 float; core 1 stays on afterwards unless it failed */
+        static uint8_t msg[32];
+        uint32_t st[4], k, r, mode = p[4], sv = au_on, fails = 0;
+        void (*volatile c0f)(uint32_t) = x_fload, (*volatile c0i)(uint32_t) = x_iload;
+        ota_frame_done();
+        au_on = 0;
+        st[0] = (uint32_t)fm1_cpu1_start();
+        for (r = 0; r < 20u && !st[0]; r++) {
+            int ran = fm1_cpu1_run(mode == 1u ? x_iload : x_fload, 100000u);
+            STAGE(70 + mode);
+            if (mode == 2u)
+                c0i(100000u);
+            else
+                c0f(100000u);
+            STAGE(69);
+            if (ran && fm1_cpu1_wait() != 0) {
+                fails++;
+                break;
+            }
+            fm1_wdt_feed();
+        }
+        st[1] = r; st[2] = fails; st[3] = fm1_c1_gave_up | fm1_c1_mb.bad << 8;
+        au_on = (uint8_t)sv;
+        STAGE(9);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '5';
+        k = 5u + ota_pack7((const uint8_t *)st, 16, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
     } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '4') {

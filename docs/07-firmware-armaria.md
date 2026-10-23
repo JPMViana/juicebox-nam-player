@@ -25,7 +25,12 @@ com `tools/bb_install.py`).
   - v0.10: NAM em pipeline com os dois núcleos na flash (float nos dois) → o núcleo 1 falha, o
     fallback o segura, **e o USB e o DMA de áudio param** (núcleo 0 segue vivo: tela, LEDs, ADC).
     Recuperado religando o pedal e gravando a v0.10.1 no instante em que o USB respondeu.
-- **v0.10.1 (atual)**: segundo núcleo e NAM desligados (passthrough), para seguirmos com segurança.
+- **v0.10.1**: segundo núcleo e NAM desligados (passthrough), para seguirmos com segurança.
+- **v0.10.2 (atual)** + `JB5` (tudo na flash, laços só em registradores): **núcleo 1 em inteiros +
+  núcleo 0 em float também trava** (o watchdog reiniciou). Então não é só "float nos dois": até agora só
+  inteiro + inteiro na flash (`JB4` modo 3) funcionou. Modos 2/3 do JB5 não rodaram.
+- Próximos passos: (a) testar JB5 modos 2/3 e a carga real com inteiros nos dois núcleos;
+  (b) kernel otimizado em assembly num núcleo; (c) se (a) passar, NAM em ponto fixo nos dois núcleos.
 
 ## v0.2.x (2026-10-22) — Juice-Box, gravado e rodando (v0.2.2 = `BlackBox_906`)
 
