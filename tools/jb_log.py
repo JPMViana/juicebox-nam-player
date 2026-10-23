@@ -64,6 +64,11 @@ def main():
             print(f"    raw {r.hex(' ')}")
         magic, boots, pst, pms, plo = struct.unpack_from("<IIIII", r, 0)
         p3, wdt, failed, pend, resc, warm, vers, _ = r[20:28]
+        if magic == 0x46504A42:
+            rs = struct.unpack_from('<I', r, 28)[0]
+            print(f"{i:2d}    PROFILER amostra {boots}: núcleo 0 PC {pst:#010x} (estágio {r[20]}), núcleo 1 PC {pms:#010x} | "
+                  f"antes: núcleo 0 {plo:#010x} (estágio {r[21]}), núcleo 1 {rs:#010x}")
+            continue
         if magic == 0x32434A42:
             print(f"{i:2d}    DBG_MSG {boots:#010x}  erros WR_LIMIT {pst:#08x}  ETM {pms:#010x} {plo:#010x}  "
                   f"aos {struct.unpack_from('<I', r, 28)[0]} ms")

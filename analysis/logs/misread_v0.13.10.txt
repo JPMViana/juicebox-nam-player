@@ -1,0 +1,2 @@
+região 2 RAM alta livre 0x01C60000, 30 s: 538541056 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 12120 fronts
+região 1: sem resposta

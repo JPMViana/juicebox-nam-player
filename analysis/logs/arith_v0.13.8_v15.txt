@@ -1,0 +1,2 @@
+P3_ANA_CON9 = 0x1f -> SYSVDD nivel 15 = 1.38 V
+núcleo 1 em multiplicação de 32 bits: sem resposta (travou?)

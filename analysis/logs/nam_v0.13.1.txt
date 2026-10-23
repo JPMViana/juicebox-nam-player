@@ -1,0 +1,10 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
++5s: blocos 12144  c1 atrasado 0 (maior espera 195 us)  NAM 2674 us (max 2682)
++10s: blocos 13634  c1 atrasado 0 (maior espera 195 us)  NAM 2678 us (max 2682)
++15s: sem resposta
++20s: blocos 448  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
+DBG_MSG 00000000  DBG_EN 00000000  DBG_CON 00000000  C0_LIM 00  C1_LIM 00  erros d504d6
+c1 trace 00000000  job 0  done 0  bad 0
+janelas proibidas ao núcleo 1: 
+núcleo 1 sem falha registrada

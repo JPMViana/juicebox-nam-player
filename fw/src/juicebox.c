@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.13.0"
+#define JB_VERSION "v0.13.11"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_947"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_958"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_947"
+#define OTA_LOADER_ID "ota-BlackBox_958"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -91,6 +91,7 @@ static uint32_t now_ms(void)                    /* monotonic; survives the TIMER
 
 static void audio_service(void);
 static void jb_stage(uint32_t n);
+static uint8_t nam_vlevel = 13u;                  /* SYSVDD level for two cores (JBV sets it) */
 static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers through the main loop while NAM runs */            /* the crumb's stage (defined with it, below) */
 static void led_pwm_tick(void);
 static uint8_t led_on;
@@ -636,6 +637,64 @@ __attribute__((noinline, used)) static void nam_back_job(uint32_t slot)   /* cor
     a2lq_back(&namq, pipe.qin[slot], pipe.qlin[slot], pipe.qhs[slot], pipe.qout[slot], AU_HALF / 2u);
 }
 
+/* v0.13.4 (JB9): core 1 runs the real fixed-point back half over and over for the given ticks */
+static volatile uint32_t qb_runs __attribute__((section(".c1_bss.qb")));
+__attribute__((noinline, used)) static void qback_loop_job(uint32_t ticks)
+{
+    uint32_t t0 = FM1_C1_T4, n = 0;
+    while (FM1_C1_T4 - t0 < ticks) {
+        a2lq_back(&namq, pipe.qin[0], pipe.qlin[0], pipe.qhs[0], pipe.qout[0], AU_HALF / 2u);
+        n++;
+    }
+    qb_runs = n;
+}
+
+/* v0.13.7 (JBX): which arithmetic core 1 may use while core 0 runs float. Dense loops over a 256-word table,
+ * checked against the first pass: m = 0 plain 32-bit multiply-adds, 1 the 64-bit multiply-accumulate */
+static volatile uint32_t ar_res[4] __attribute__((section(".c1_bss.ar")));   /* runs, bad, ref, got */
+static int32_t ar_tab[256] __attribute__((section(".c1_bss.ar")));
+__attribute__((noinline)) static uint32_t ar_mul32(void)
+{
+    uint32_t i, r;
+    int32_t a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+    for (r = 0; r < 8u; r++)
+        for (i = 0; i < 256u; i += 4u) {
+            a0 += ar_tab[i] * (int32_t)(r + 3u);
+            a1 += ar_tab[i + 1u] * ar_tab[i];
+            a2 += ar_tab[i + 2u] * 0x3B9AC9;
+            a3 += ar_tab[i + 3u] * ar_tab[i + 2u];
+        }
+    return (uint32_t)(a0 ^ a1 ^ a2 ^ a3);
+}
+#define AR_MAC(acc, a, b) __asm__("%0 += %1 * %2 (s)" : "+r"(acc) : "r"(a), "r"(b))
+__attribute__((noinline)) static uint32_t ar_mac64(void)
+{
+    uint32_t i, r;
+    int64_t a0 = 0, a1 = 0, a2 = 0;
+    for (r = 0; r < 8u; r++)
+        for (i = 0; i < 255u; i += 3u) {
+            AR_MAC(a0, ar_tab[i], ar_tab[i + 1u]);
+            AR_MAC(a1, ar_tab[i + 1u], 0x1234567);
+            AR_MAC(a2, ar_tab[i + 2u], ar_tab[i]);
+        }
+    return (uint32_t)(a0 ^ a1 ^ a2 ^ (a0 >> 32) ^ (a2 >> 29));
+}
+__attribute__((noinline, used)) static void ar_job(uint32_t arg)   /* arg: mode << 28 | ticks >> 4 */
+{
+    const uint32_t m = arg >> 28, ticks = (arg & 0x0FFFFFFFu) << 4;
+    uint32_t t0 = FM1_C1_T4, n = 0, bad = 0, v, ref = m ? ar_mac64() : ar_mul32();
+    while (FM1_C1_T4 - t0 < ticks) {
+        v = m ? ar_mac64() : ar_mul32();
+        if (v != ref) {
+            if (!bad)
+                ar_res[3] = v;
+            bad++;
+        }
+        n++;
+    }
+    ar_res[0] = n; ar_res[1] = bad; ar_res[2] = ref;
+}
+
 /* core 0: the float front of the block in slot, then its hand-over to core 1 in Q8.23 */
 static void nam_front_slot(uint32_t slot)
 {
@@ -652,7 +711,7 @@ static void nam_front_slot(uint32_t slot)
 static uint32_t mr_test_buf[MR_WORDS];
 static uint32_t mr_low_buf[MR_WORDS] __attribute__((section(".lowtest")));   /* 0x01C08000: core 1's stack before v0.12.4 */
 static volatile uint32_t *mr_base;
-static volatile uint32_t mr_res[6];               /* reads (x 1024), misreads, first: address, value, expected; done */
+static volatile uint32_t mr_res[6] __attribute__((section(".c1_bss.mr")));               /* reads (x 1024), misreads, first: address, value, expected; done */
 #define MR_PAT(a) ((uint32_t)(a) * 0x9E3779B1u ^ 0x5A5AA5A5u)
 __attribute__((noinline, used)) static void mr_job(uint32_t ticks)
 {
@@ -1062,15 +1121,25 @@ static uint8_t fl_page[256] __attribute__((aligned(4)));
 static uint32_t flash_id;
 static uint8_t flash_ok;
 
+/* v0.13.2: interrupts are on (the CPU exception; the profiler's TIMER5 once the NAM runs), and their entries are
+ * in XIP: off around every flash operation (the flash is off inside them) */
 static int fl_read(uint32_t off, void *p, uint32_t n)
 {
-    return FL_FAR(fl_read_ram)(off, (uint8_t *)p, n);
+    int rc;
+    fm1_irq_off();
+    rc = FL_FAR(fl_read_ram)(off, (uint8_t *)p, n);
+    fm1_irq_on();
+    return rc;
 }
 
 static int fl_erase_sector(uint32_t off)
 {
     uint32_t took;
-    return FL_FAR(fl_erase4k_ram)(off, &took);
+    int rc;
+    fm1_irq_off();
+    rc = FL_FAR(fl_erase4k_ram)(off, &took);
+    fm1_irq_on();
+    return rc;
 }
 
 static int fl_prog(uint32_t off, const uint8_t *src, uint32_t n)     /* src: RAM or XIP (copied) */
@@ -1083,7 +1152,9 @@ static int fl_prog(uint32_t off, const uint8_t *src, uint32_t n)     /* src: RAM
             chunk = n;
         for (i = 0; i < chunk; i++)
             fl_page[i] = src[i];
+        fm1_irq_off();
         rc = FL_FAR(fl_prog_ram)(off, fl_page, chunk, &took);
+        fm1_irq_on();
         if (rc)
             return rc;
         poll();
@@ -1136,6 +1207,41 @@ static uint32_t crumb_sum(void)
 #define CRUMB_SEAL() (crumb.check = crumb_sum())
 #define STAGE(n) (crumb.stage = (n), CRUMB_SEAL())
 static void jb_stage(uint32_t n) { STAGE(n); }
+
+/* ------------------------------------------------------- the profiler --- */
+/* v0.13.2: TIMER5 at 1 kHz samples where each core is (core 0: the interrupted PC; core 1: its PCRS) into
+ * .noinit; after a watchdog reset the next boot logs the last samples (a hang shows where; samples that stop
+ * mean even the interrupt stopped: the bus) */
+#define PROF_MAGIC 0x464F5250u                    /* "PROF" */
+static struct {
+    uint32_t magic, n, pc0[8], pc1[8], stage[8];
+} prof __attribute__((section(".noinit")));
+void jb_prof_irq(uint32_t pc)
+{
+    uint32_t i = prof.n & 7u;
+    *(volatile uint32_t *)0x10900u |= 0x4000u;    /* TIMER5 pending clear */
+    prof.pc0[i] = pc;
+    prof.pc1[i] = *(volatile uint32_t *)0x1EEF27Cu;   /* core 1's PCRS */
+    prof.stage[i] = crumb.stage;
+    prof.n++;
+}
+extern void isr_jbprof(void);
+static void prof_start(void)
+{
+    uint32_t i;
+    prof.magic = PROF_MAGIC;
+    prof.n = 0;
+    for (i = 0; i < 8u; i++)
+        prof.pc0[i] = prof.pc1[i] = prof.stage[i] = 0;
+    fm1_irq_off();
+    *(volatile uint32_t *)0x10900u = 0x4000u;     /* TIMER5: OSC / 4 = 6 MHz, PRD 6000 -> 1 kHz, IRQ 63 */
+    *(volatile uint32_t *)0x10904u = 0;
+    *(volatile uint32_t *)0x10908u = 6000u;
+    fm1_irq_attach(63u, isr_jbprof, 6u);
+    *(volatile uint32_t *)0x10900u = 0x4019u;
+    fm1_irq_on();
+}
+
 
 static void ota_show(uint32_t step, int32_t code)
 {
@@ -1281,8 +1387,8 @@ static void debug_service(void)                   /* our SysEx; anything else st
             len |= (uint32_t)p[9 + i] << (7u * i);
         }
         ota_frame_done();
-        if (a < 0x01C00000u || a + len > 0x01C80000u || len > 4096u)
-            len = 0;
+        if (!((a >= 0x01C00000u && a + len <= 0x01C80000u) || (a >= 0x10000u && a + len <= 0x10100u)) || len > 4096u)
+            len = 0;   /* RAM, or the clock / reset registers (v0.13.9) */
         for (i = 0; i < len; i += 48u) {
             uint32_t nb = len - i > 48u ? 48u : len - i;
             msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'M';
@@ -1293,7 +1399,8 @@ static void debug_service(void)                   /* our SysEx; anything else st
         }
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'M'; msg[5] = 0x7F; msg[6] = 0xF7;
         ota_wire_send(msg, 7);
-    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '6') {
+    } else if ((n == 5u || n == 6u) && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '6') {
+        const uint32_t mr_secs = n == 6u && p[5] ? p[5] : 2u;
         /* JB6 r: misread census, region r: 0 = core 1's own stack, 1 = RAM (.bss), 2 = free high RAM 0x01C60000,
          * 3 = free RAMTEXT 0x01C02000. Core 0 runs a2l_front + poll meanwhile. Reply: 6 words */
         static uint8_t msg[48];
@@ -1309,13 +1416,13 @@ static void debug_service(void)                   /* our SysEx; anything else st
         for (i = 0; i < 6u; i++)
             mr_res[i] = 0;
         FM1_C1_SYNC();
-        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
         fm1_delay_ms(2);
         if (!c1_ok)
             c1_ok = fm1_cpu1_start() == 0;
-        if (c1_ok && fm1_cpu1_run(mr_job, 24000000u * 2u)) {
+        if (c1_ok && fm1_cpu1_run(mr_job, 24000000u * mr_secs)) {
             t0 = fm1_ticks();
-            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < 3000000u * FM1_TICKS_PER_US) {
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (mr_secs + 5u) * 1000000u * FM1_TICKS_PER_US) {
                 void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
                 if (nam_ok)
                     front(&nam, din, dlin, dhs, AU_HALF / 2u);
@@ -1342,7 +1449,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
         for (i = 0; i < 5u; i++)
             fp_res1[i] = 0;
         FM1_C1_SYNC();
-        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
         fm1_delay_ms(2);
         if (!c1_ok)
             c1_ok = fm1_cpu1_start() == 0;
@@ -1390,7 +1497,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
         ir_res[0] = ir_res[1] = ir_res[2] = 0;
         ir_res[3] = int_rec(10u, 0x1234u);
         FM1_C1_SYNC();
-        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
         fm1_delay_ms(2);
         c1_guard_setup();
         if (!c1_ok)
@@ -1411,6 +1518,121 @@ static void debug_service(void)                   /* our SysEx; anything else st
         r[5] = (fm1_c1_mb.done == fm1_c1_mb.job) | (fm1_c1_crash.magic == FM1_CRASH_MAGIC) << 1;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '8';
         k = 5u + ota_pack7((const uint8_t *)r, 24, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 6u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '9') {
+        /* JB9 m s: core 1 loops a2lq_back for s seconds; core 0 meanwhile: m = 0 the float front, 1 integer work,
+         * 2 only poll(). The profiler runs (a lock shows in the next boot's log). Reply: core 1 runs, core 0 runs */
+        static uint8_t msg[32];
+        static a2l_t din[AU_HALF / 2u], dlin[AU_HALF / 2u * A2L_C], dhs[AU_HALF / 2u * A2L_C];
+        uint32_t r[3], k, t0, i, kk, runs0 = 0, secs = p[5] ? p[5] : 1u;
+        ota_frame_done();
+        qb_runs = 0;
+        nam_on = 0;
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
+        fm1_delay_ms(2);
+        c1_guard_setup();
+        if (!c1_ok)
+            c1_ok = fm1_cpu1_start() == 0;
+        prof_start();
+        if (c1_ok && fm1_cpu1_run(qback_loop_job, 24000000u * secs)) {
+            t0 = fm1_ticks();
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (secs + 5u) * 1000000u * FM1_TICKS_PER_US) {
+                if (p[4] == 0u) {
+                    void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+                    if (nam_ok)
+                        front(&nam, din, dlin, dhs, AU_HALF / 2u);
+                } else if (p[4] == 1u) {
+                    for (i = 0, kk = 1; i < 20000u; i++)
+                        kk = kk * 0x01000193u + i;
+                    runs0 += kk == 0;
+                }
+                runs0++;
+                poll();
+                FM1_C1_SYNC();
+            }
+        }
+        r[0] = qb_runs; r[1] = runs0; r[2] = fm1_c1_mb.done == fm1_c1_mb.job;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '9';
+        k = 5u + ota_pack7((const uint8_t *)r, 12, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 6u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'X') {
+        /* JBX m s: ar_job(m) on core 1 for s seconds while core 0 runs the float front; the profiler runs */
+        static uint8_t msg[40];
+        static a2l_t din[AU_HALF / 2u], dlin[AU_HALF / 2u * A2L_C], dhs[AU_HALF / 2u * A2L_C];
+        uint32_t r[6], k, t0, i, runs0 = 0, secs = p[5] ? p[5] : 1u;
+        ota_frame_done();
+        for (i = 0; i < 256u; i++)
+            ar_tab[i] = (int32_t)(i * 0x9E3779B1u) >> 3;
+        for (i = 0; i < 4u; i++)
+            ar_res[i] = 0;
+        nam_on = 0;
+        FM1_C1_SYNC();
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
+        fm1_delay_ms(2);
+        c1_guard_setup();
+        if (!c1_ok)
+            c1_ok = fm1_cpu1_start() == 0;
+        prof_start();
+        if (c1_ok && fm1_cpu1_run(ar_job, (uint32_t)p[4] << 28 | (24000000u * secs) >> 4)) {
+            t0 = fm1_ticks();
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (secs + 5u) * 1000000u * FM1_TICKS_PER_US) {
+                void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+                if (nam_ok)
+                    front(&nam, din, dlin, dhs, AU_HALF / 2u);
+                runs0++;
+                poll();
+                FM1_C1_SYNC();
+            }
+        }
+        r[0] = ar_res[0]; r[1] = ar_res[1]; r[2] = ar_res[2]; r[3] = ar_res[3]; r[4] = runs0;
+        r[5] = fm1_c1_mb.done == fm1_c1_mb.job;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'X';
+        k = 5u + ota_pack7((const uint8_t *)r, 24, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 15u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'Y') {
+        /* JBY X Y s (X, Y: 5 x 7 bits each): RAM bank test. Core 1 reads a 4 KB pattern at X (mr_job), core 0 reads
+         * one at Y back to back (+ poll), both checked. Reply: core 1 reads/1024, bad, core 0 reads/1024, bad, done */
+        static uint8_t msg[40];
+        volatile uint32_t *x, *y;
+        uint32_t r[5], i, k, t0, xa = 0, ya = 0, secs = p[14] ? p[14] : 1u, bad0 = 0, rounds0 = 0;
+        for (i = 0; i < 5u; i++) {
+            xa |= (uint32_t)p[4 + i] << (7u * i);
+            ya |= (uint32_t)p[9 + i] << (7u * i);
+        }
+        ota_frame_done();
+        x = (volatile uint32_t *)(uintptr_t)xa;
+        y = (volatile uint32_t *)(uintptr_t)ya;
+        if (xa >= 0x01C01000u && ya >= 0x01C01000u && xa + 4096u <= 0x01C74000u && ya + 4096u <= 0x01C74000u) {
+            for (i = 0; i < MR_WORDS; i++) {
+                x[i] = MR_PAT((uint32_t)(uintptr_t)(x + i));
+                y[i] = MR_PAT((uint32_t)(uintptr_t)(y + i));
+            }
+            mr_base = x;
+            for (i = 0; i < 6u; i++)
+                mr_res[i] = 0;
+            FM1_C1_SYNC();
+            fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
+            fm1_delay_ms(2);
+            if (!c1_ok)
+                c1_ok = fm1_cpu1_start() == 0;
+            prof_start();
+            if (c1_ok && fm1_cpu1_run(mr_job, 24000000u * secs)) {
+                t0 = fm1_ticks();
+                while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (secs + 5u) * 1000000u * FM1_TICKS_PER_US) {
+                    for (i = 0; i < MR_WORDS; i++)
+                        bad0 += y[i] != MR_PAT((uint32_t)(uintptr_t)(y + i));
+                    rounds0++;
+                    if (!(rounds0 & 7u))
+                        poll();
+                }
+            }
+        }
+        r[0] = mr_res[0]; r[1] = mr_res[1]; r[2] = rounds0; r[3] = bad0; r[4] = fm1_c1_mb.done == fm1_c1_mb.job;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'Y';
+        k = 5u + ota_pack7((const uint8_t *)r, 20, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'Q') {
@@ -1459,11 +1681,12 @@ static void debug_service(void)                   /* our SysEx; anything else st
         static uint8_t msg[16];
         uint32_t st[2], k;
         ota_frame_done();
-        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
         fm1_delay_ms(2);
         c1_guard_setup();
         if (!c1_ok)
             c1_ok = fm1_cpu1_start() == 0;
+        prof_start();
         pipe_primed = 0;
         nam_on = nam_ok && c1_ok;
         nam_dbg_marks = 1;
@@ -1479,8 +1702,11 @@ static void debug_service(void)                   /* our SysEx; anything else st
         uint8_t r[32];
         uint32_t i, k;
         ota_frame_done();
-        if (p[4] <= 15u)
+        if (p[4] <= 15u) {
             fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | p[4]));
+            if (p[4] >= 11u)
+                nam_vlevel = p[4];
+        }
         for (i = 0; i < 32u; i++)
             r[i] = fm1_p33_read(i);
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'V';
@@ -1771,6 +1997,23 @@ static void jb_main(void)
     STAGE(4);
     if (flash_ok)
         log_write();
+    if (flash_ok && prof.magic == PROF_MAGIC && boot_rec.warm) {   /* the profiler ran: its last 2 x 3 samples */
+        uint32_t j, last = prof.n;
+        for (j = 0; j < 2u; j++) {
+            uint32_t i0 = (last - 1u - 3u * j) & 7u, i1 = (last - 2u - 3u * j) & 7u, i2 = (last - 3u - 3u * j) & 7u;
+            boot_rec.magic = 0x46504A42u;         /* "BJPF" */
+            boot_rec.boots = last;
+            boot_rec.prev_stage = prof.pc0[i0];
+            boot_rec.prev_ms = prof.pc1[i0];
+            boot_rec.prev_loops = prof.pc0[i1];
+            boot_rec.rst_src = prof.pc1[i1];
+            boot_rec.p3_rst = (uint8_t)prof.stage[i0];
+            boot_rec.wdt_con = (uint8_t)prof.stage[i1];
+            boot_rec.failed = (uint8_t)prof.stage[i2];
+            log_write();
+        }
+    }
+    prof.magic = 0;
     if (flash_ok && fm1_crash.magic == FM1_CRASH_MAGIC) {   /* the last run faulted: one more record */
         boot_rec.magic = 0x52434A42u;             /* "BJCR" */
         boot_rec.boots = fm1_crash.vec | fm1_crash.core << 16;

@@ -88,10 +88,16 @@ void __attribute__((section(C1_MAIN_SECTION), noreturn, used)) fm1_c1_main(void)
     fm1_c1_mb.alive = 1;
     FM1_C1_SYNC();
     for (;;) {
-        uint32_t j = fm1_c1_mb.job;
+        uint32_t j = fm1_c1_mb.job, k;
         FM1_C1_SYNC();
-        if (j == done)
+        if (j == done) {
+            /* Juice-Box v0.13.3: a calm wait, registers only between two looks at the mailbox (~1 us). Polling it
+             * back to back (a load and a csync per turn) while core 0 ran float code locked the whole chip up
+             * (the profiler: core 1 here, core 0 in layer_run, then even TIMER5 stopped) */
+            for (k = 0; k < 120u; k++)
+                __asm__ volatile("" ::: "memory");
             continue;
+        }
         if (j == done + 1u) {
             void (*fn)(uint32_t) = fm1_c1_mb.fn;
             uint32_t arg = fm1_c1_mb.arg;

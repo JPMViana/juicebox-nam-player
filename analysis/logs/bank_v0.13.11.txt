@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "tools/jb_bank.py", line 7, in <module>
+    x, y, secs = int(sys.argv[1], 0), int(sys.argv[2], 0), int(sys.argv[3]) if len(sys.argv) > 3 else 20
+                 ~~~^^^^^^^^^^^^^^^^
+ValueError: invalid literal for int() with base 0: '0x01C60000 0x01C70000'
+Traceback (most recent call last):
+  File "tools/jb_bank.py", line 7, in <module>
+    x, y, secs = int(sys.argv[1], 0), int(sys.argv[2], 0), int(sys.argv[3]) if len(sys.argv) > 3 else 20
+                 ~~~^^^^^^^^^^^^^^^^
+ValueError: invalid literal for int() with base 0: '0x01C60000 0x01C68000'
+Traceback (most recent call last):
+  File "tools/jb_bank.py", line 7, in <module>
+    x, y, secs = int(sys.argv[1], 0), int(sys.argv[2], 0), int(sys.argv[3]) if len(sys.argv) > 3 else 20
+                 ~~~^^^^^^^^^^^^^^^^
+ValueError: invalid literal for int() with base 0: '0x01C60000 0x01C61000'

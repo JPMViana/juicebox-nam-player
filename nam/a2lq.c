@@ -5,6 +5,17 @@
 
 #define WF A2LQ_WF
 
+/* acc (int64) += a * b (int32 x int32): the pi32v2 multiply-accumulate, with 32-bit operands (written as C the
+ * compiler widens the weights to 64 bits and spills them; v0.13.0 ran ~2.9 ms per block that way) */
+#ifdef __clang__
+#ifndef __APPLE__                                  /* (the host test: plain C) */
+#define MAC(acc, a, b) __asm__("%0 += %1 * %2 (s)" : "+r"(acc) : "r"(a), "r"(b))
+#endif
+#endif
+#ifndef MAC
+#define MAC(acc, a, b) ((acc) += (int64_t)(a) * (b))
+#endif
+
 int64_t a2lq_z[A2L_BLOCK_MAX * A2L_C] A2L_C1_DATA;
 
 static void ring_write_q(a2lq_t *ring, uint32_t mask, uint32_t pos, const a2lq_t *src, uint32_t frames)
@@ -47,16 +58,24 @@ static void layer_q(struct a2lq_layer *L, uint32_t pos, const a2lq_t *in, a2lq_t
             const int64_t b0 = L->conv_b[0], b1 = L->conv_b[1], b2 = L->conv_b[2];
             for (f = 0; f < frames; f++, s += 3, zf += 3) {
                 const int32_t s0 = s[0], s1 = s[1], s2 = s[2];
-                zf[0] = b0 + (int64_t)w00 * s0 + (int64_t)w01 * s1 + (int64_t)w02 * s2;
-                zf[1] = b1 + (int64_t)w10 * s0 + (int64_t)w11 * s1 + (int64_t)w12 * s2;
-                zf[2] = b2 + (int64_t)w20 * s0 + (int64_t)w21 * s1 + (int64_t)w22 * s2;
+                int64_t a0 = b0, a1 = b1, a2 = b2;
+                MAC(a0, w00, s0); MAC(a0, w01, s1); MAC(a0, w02, s2);
+                MAC(a1, w10, s0); MAC(a1, w11, s1); MAC(a1, w12, s2);
+                MAC(a2, w20, s0); MAC(a2, w21, s1); MAC(a2, w22, s2);
+                zf[0] = a0;
+                zf[1] = a1;
+                zf[2] = a2;
             }
         } else {
             for (f = 0; f < frames; f++, s += 3, zf += 3) {
                 const int32_t s0 = s[0], s1 = s[1], s2 = s[2];
-                zf[0] += (int64_t)w00 * s0 + (int64_t)w01 * s1 + (int64_t)w02 * s2;
-                zf[1] += (int64_t)w10 * s0 + (int64_t)w11 * s1 + (int64_t)w12 * s2;
-                zf[2] += (int64_t)w20 * s0 + (int64_t)w21 * s1 + (int64_t)w22 * s2;
+                int64_t a0 = zf[0], a1 = zf[1], a2 = zf[2];
+                MAC(a0, w00, s0); MAC(a0, w01, s1); MAC(a0, w02, s2);
+                MAC(a1, w10, s0); MAC(a1, w11, s1); MAC(a1, w12, s2);
+                MAC(a2, w20, s0); MAC(a2, w21, s1); MAC(a2, w22, s2);
+                zf[0] = a0;
+                zf[1] = a1;
+                zf[2] = a2;
             }
         }
     }
@@ -72,18 +91,26 @@ static void layer_q(struct a2lq_layer *L, uint32_t pos, const a2lq_t *in, a2lq_t
         a2lq_t *hs = hsum, *ln = lin;
         for (f = 0; f < frames; f++, s += 3, zf += 3, hs += 3, ln += 3) {
             const int32_t s0 = s[0], s1 = s[1], s2 = s[2], x = in[f];
-            int32_t a0 = (int32_t)((zf[0] + (int64_t)w00 * s0 + (int64_t)w01 * s1 + (int64_t)w02 * s2 + (int64_t)m0 * x) >> WF);
-            int32_t a1 = (int32_t)((zf[1] + (int64_t)w10 * s0 + (int64_t)w11 * s1 + (int64_t)w12 * s2 + (int64_t)m1 * x) >> WF);
-            int32_t a2 = (int32_t)((zf[2] + (int64_t)w20 * s0 + (int64_t)w21 * s1 + (int64_t)w22 * s2 + (int64_t)m2 * x) >> WF);
+            int64_t c0 = zf[0], c1 = zf[1], c2 = zf[2], r0 = lb0, r1 = lb1, r2 = lb2;
+            int32_t a0, a1, a2;
+            MAC(c0, w00, s0); MAC(c0, w01, s1); MAC(c0, w02, s2); MAC(c0, m0, x);
+            MAC(c1, w10, s0); MAC(c1, w11, s1); MAC(c1, w12, s2); MAC(c1, m1, x);
+            MAC(c2, w20, s0); MAC(c2, w21, s1); MAC(c2, w22, s2); MAC(c2, m2, x);
+            a0 = (int32_t)(c0 >> WF);
+            a1 = (int32_t)(c1 >> WF);
+            a2 = (int32_t)(c2 >> WF);
             a0 = leaky(a0);
             a1 = leaky(a1);
             a2 = leaky(a2);
             hs[0] += a0;
             hs[1] += a1;
             hs[2] += a2;
-            ln[0] += (int32_t)((lb0 + (int64_t)lw[0][0] * a0 + (int64_t)lw[0][1] * a1 + (int64_t)lw[0][2] * a2) >> WF);
-            ln[1] += (int32_t)((lb1 + (int64_t)lw[1][0] * a0 + (int64_t)lw[1][1] * a1 + (int64_t)lw[1][2] * a2) >> WF);
-            ln[2] += (int32_t)((lb2 + (int64_t)lw[2][0] * a0 + (int64_t)lw[2][1] * a1 + (int64_t)lw[2][2] * a2) >> WF);
+            MAC(r0, lw[0][0], a0); MAC(r0, lw[0][1], a1); MAC(r0, lw[0][2], a2);
+            MAC(r1, lw[1][0], a0); MAC(r1, lw[1][1], a1); MAC(r1, lw[1][2], a2);
+            MAC(r2, lw[2][0], a0); MAC(r2, lw[2][1], a1); MAC(r2, lw[2][2], a2);
+            ln[0] += (int32_t)(r0 >> WF);
+            ln[1] += (int32_t)(r1 >> WF);
+            ln[2] += (int32_t)(r2 >> WF);
         }
     }
 }
@@ -102,8 +129,11 @@ void a2lq_back(struct a2lq *q, const a2lq_t *in, a2lq_t *lin, a2lq_t *hsum, a2lq
     for (k = 0; k < A2L_HEAD_K; k++) {
         const a2lq_t *s = q->head_ring + ((pos - (A2L_HEAD_K - 1u - k)) & (A2L_HEAD_RING - 1u)) * A2L_C;
         const int32_t w0 = q->head_w[k][0], w1 = q->head_w[k][1], w2 = q->head_w[k][2];
-        for (f = 0; f < frames; f++, s += 3)
-            z[f] += (int64_t)w0 * s[0] + (int64_t)w1 * s[1] + (int64_t)w2 * s[2];
+        for (f = 0; f < frames; f++, s += 3) {
+            int64_t a = z[f];
+            MAC(a, w0, s[0]); MAC(a, w1, s[1]); MAC(a, w2, s[2]);
+            z[f] = a;
+        }
     }
     {
         const int32_t sc = q->head_scale;

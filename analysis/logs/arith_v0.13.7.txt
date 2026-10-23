@@ -1,0 +1,4 @@
+núcleo 1 em multiplicação de 32 bits: sem resposta (travou?)
+1 records (oldest first; 'prev' = where the boot before this one got to)
+ #  boots warm  prev stage       prev ms  prev loops  p3_rst          wdt  failed pend resc
+ 0    DBG_MSG 0x00100000  erros WR_LIMIT 0xd502d6  ETM 0x020077d0 0x0200786a  aos 32758 ms

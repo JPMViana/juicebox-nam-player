@@ -35,6 +35,61 @@ com `tools/bb_install.py`).
 - Próximos passos: (a) testar JB5 modos 2/3 e a carga real com inteiros nos dois núcleos;
   (b) kernel otimizado em assembly num núcleo; (c) se (a) passar, NAM em ponto fixo nos dois núcleos.
 
+## v0.13.x (2026-10-23) — NAM em dois núcleos: ponto fixo no núcleo 1, travas por conflito de RAM
+
+**Estado ao parar (v0.13.11, `BlackBox_958`)**: o pedal liga com o NAM desligado (passthrough, seguro).
+O NAM em dois núcleos é ligado só por USB (`tools/jb_nam_on.py`) e ainda trava em ~6 s.
+
+### Feito
+- `nam/a2lq.c`: segunda metade do A2-Lite (camadas 13..22 + head) em **ponto fixo** (pesos Q2.29,
+  ativações Q8.23, acumulador 64 bits com a instrução `r1_r0 += r2 * r3 (s)` via asm inline); sem
+  nenhuma instrução de float (o build verifica). `nam/a2lx.c`: conversões e prewarm (núcleo 0).
+  Host (`nam/test/a2lx_host.c`): **SNR 121 dB** e diferença máxima 2,8e-7 contra o modelo em float.
+- Pipeline: núcleo 0 roda o front em float e converte para Q8.23; o núcleo 1 roda o back em ponto fixo.
+  - v0.13.0: 60 s sem falha, mas 2940 us/bloco (> 2902);
+  - v0.13.1 (MAC explícito): **2674 us/bloco** (espera pelo núcleo 1 ~200 us), porém trava em ~6–15 s.
+- Tudo que o núcleo 1 usa fica em `.c1_bss` (0x01C50000–0x01C5DBD0).
+- Ferramentas de diagnóstico:
+  - **profiler** por TIMER5 a 1 kHz: PC dos dois núcleos gravado em `.noinit` e registrado no boot como
+    "PROFILER" em `tools/jb_log.py`;
+  - as operações de flash rodam com as interrupções desligadas;
+  - a espera do núcleo 1 virou "calma" (sem martelar a caixa de correio).
+- Testes novos, todos pelo USB:
+  - JB9 (`tools/jb_qback.py`)
+  - JBX (`tools/jb_arith.py`)
+  - JB6 com duração (`tools/jb_misread.py SEG REGIÕES`)
+  - JBY (`tools/jb_bank.py X Y SEG`)
+  - JBV agora também define a tensão usada nos testes (`nam_vlevel`).
+
+### O que os testes mostram
+
+| Núcleo 1 | Núcleo 0 | Resultado |
+|---|---|---|
+| back em ponto fixo (JB9) | só serviço / inteiros | ok, 20 s |
+| back em ponto fixo (JB9) | front em float | núcleo 0 lê endereço inválido |
+| laço denso de mul 32 bits sobre tabela em 0x01C5C9E4 (JBX) | front em float | trava (mesmo a 1,38 V) |
+| leituras densas em **0x01C60000** (JB6, 30 s) | front em float | **0 erros em 538 M leituras** |
+| leituras densas em **0x01C0BA2C** (.bss) (JB6) | front em float | **trava** |
+| recursão (pilha) em 0x01C50000 (JB8, 120 s) | front em float | ok |
+
+- A tensão não resolve (1,38 V também trava). O SDK inicia o núcleo 1 igual ao Felucca (`EnableOtherCpu` e
+  `cpu1_start` desmontados de `system.a` / `cpu.a`); os divisores de clock são `0x10008 = 0x00010200`.
+- **Hipótese atual**: conflito de **banco de SRAM**. Quando os dois núcleos acessam intensamente o mesmo
+  banco, há leituras erradas e travas; o float só parecia o culpado por ser o código com mais acesso à memória.
+
+### Próximo passo (não executado)
+1. Medir o tamanho dos bancos com o JBY, um par de regiões por chamada (o laço do zsh não separou os
+   argumentos):
+   - `tools/jb_bank.py 0x01C60000 0x01C70000 20` (64 KB)
+   - `tools/jb_bank.py 0x01C60000 0x01C68000 20` (32 KB)
+   - `tools/jb_bank.py 0x01C60000 0x01C61000 20` (4 KB)
+2. Se confirmado, separar a memória por banco:
+   - **só do núcleo 1**: `namq`, os anéis das camadas 13..22, a pilha dele, os buffers Q;
+   - **só do núcleo 0**: `nam`, os anéis 0..12, `z`, as pilhas, os buffers de áudio e USB.
+3. Ganhar margem de tempo no front em float (núcleo 0 em ~2,4 ms).
+4. Pendências: reduzir o ganho de saída; carregar `.nam` pelo USB; taxa de amostragem 48 kHz × 44,1 kHz;
+   IR; UI.
+
 ## v0.11.x – v0.12.x (2026-10-23) — segundo núcleo: o que falha e o que funciona
 
 - **Tensão do núcleo**: SYSVDD padrão 1,26 V (`P3_ANA_CON9` nível 11); usamos 1,32 V (nível 13) quando o

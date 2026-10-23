@@ -1,0 +1,3 @@
+modo 2 (núcleo 0 só no laço de serviço), 20 s: núcleo 1 7487 blocos do back (374/s, 2671 us cada); núcleo 0 5432696 rodadas; terminou False
+modo 1 (núcleo 0 em inteiros), 20 s: núcleo 1 0 blocos do back (0/s, 20000000 us cada); núcleo 0 32602 rodadas; terminou False
+modo 0 (núcleo 0 no front em float), 20 s: núcleo 1 0 blocos do back (0/s, 20000000 us cada); núcleo 0 8418 rodadas; terminou False

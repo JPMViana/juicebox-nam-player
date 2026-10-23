@@ -1,0 +1,5 @@
+modo 0 (núcleo 0 no front em float): sem resposta (travou?)
+no answer (is it running Juice-Box v0.2 or later?)
+1 records (oldest first; 'prev' = where the boot before this one got to)
+ #  boots warm  prev stage       prev ms  prev loops  p3_rst          wdt  failed pend resc
+ 0    DBG_MSG 0x00000010  erros WR_LIMIT 0xd502d6  ETM 0x020074fa 0x02007540  aos 43404 ms

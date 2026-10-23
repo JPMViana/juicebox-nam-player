@@ -1,0 +1,2 @@
+modo 1 (núcleo 0 em inteiros), 20 s: núcleo 1 7486 blocos do back (374/s, 2672 us cada); núcleo 0 38808 rodadas; terminou False
+modo 0 (núcleo 0 no front em float), 20 s: núcleo 1 0 blocos do back (0/s, 20000000 us cada); núcleo 0 10021 rodadas; terminou False

@@ -1,0 +1,6 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
++5s: blocos 10863  c1 atrasado 0 (maior espera 0 us)  NAM 0 us (max 0)
+1 records (oldest first; 'prev' = where the boot before this one got to)
+ #  boots warm  prev stage       prev ms  prev loops  p3_rst          wdt  failed pend resc
+ 0    PROFILER amostra 6024: núcleo 0 PC 0x02007378 (estágio 81), núcleo 1 PC 0x02000804 | antes: núcleo 0 0x020072aa (estágio 81), núcleo 1 0x02000802
