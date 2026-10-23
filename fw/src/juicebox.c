@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_958"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_965"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_958"
+#define OTA_LOADER_ID "ota-BlackBox_965"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -91,6 +91,7 @@ static uint32_t now_ms(void)                    /* monotonic; survives the TIMER
 
 static void audio_service(void);
 static void jb_stage(uint32_t n);
+#define VDC14_LEVEL 5u                            /* 1.25 V + 0.05 V x level = 1.50 V (SDK default 3 = 1.40 V) */
 static uint8_t nam_vlevel = 13u;                  /* SYSVDD level for two cores (JBV sets it) */
 static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers through the main loop while NAM runs */            /* the crumb's stage (defined with it, below) */
 static void led_pwm_tick(void);
@@ -549,6 +550,7 @@ static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
 static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
 static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
+#define NAM_OUT_TRIM 0.25f                        /* v0.13.13: NAM output -12 dB (first guess for a power amp; tune by ear) */
 static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
 static volatile uint32_t au_clip_in_ev, au_clip_out_ev;   /* clip events, for the screen */
 static uint32_t au_halves, au_late;
@@ -720,6 +722,30 @@ __attribute__((noinline, used)) static void mr_job(uint32_t ticks)
     while (FM1_C1_T4 - t0 < ticks) {
         for (i = 0; i < MR_WORDS; i++) {
             uint32_t v = b[i], e = MR_PAT((uint32_t)(uintptr_t)(b + i));
+            if (v != e) {
+                if (!bad) {
+                    mr_res[2] = (uint32_t)(uintptr_t)(b + i); mr_res[3] = v; mr_res[4] = e;
+                }
+                bad++;
+            }
+        }
+        rounds++;
+    }
+    mr_res[0] = rounds;
+    mr_res[1] = bad;
+}
+
+/* v0.13.13 (JBY mode 8): core 1 writes the pattern (xor the round) and reads it back: write traffic, which the NAM's
+ * back half has and the read census did not */
+__attribute__((noinline, used)) static void mw_job(uint32_t ticks)
+{
+    volatile uint32_t *b = mr_base;
+    uint32_t t0 = FM1_C1_T4, rounds = 0, bad = 0, i;
+    while (FM1_C1_T4 - t0 < ticks) {
+        for (i = 0; i < MR_WORDS; i++)
+            b[i] = MR_PAT((uint32_t)(uintptr_t)(b + i)) ^ rounds;
+        for (i = 0; i < MR_WORDS; i++) {
+            uint32_t v = b[i], e = MR_PAT((uint32_t)(uintptr_t)(b + i)) ^ rounds;
             if (v != e) {
                 if (!bad) {
                     mr_res[2] = (uint32_t)(uintptr_t)(b + i); mr_res[3] = v; mr_res[4] = e;
@@ -960,7 +986,7 @@ static void audio_service(void)
     out = au_tx + h * AU_HALF;
     g = au_gain;
     if (nam_on && nam_ok && c1_ok) {              /* guitar (L) -> A2-Lite (two cores) -> both outputs */
-        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f;
+        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f * NAM_OUT_TRIM;
         const uint32_t slot = pipe_blk & 1u, prev = slot ^ 1u;
         uint32_t t1 = fm1_ticks(), f, ran = 0;
         a2l_t *nin = pipe.in[slot];
@@ -1031,7 +1057,7 @@ static void audio_service(void)
     pipe_primed = 0;
     if (nam_on && nam_ok && !c1_ok && 0) {        /* one core: too slow for real time (kept for reference) */
         static a2l_t nin[AU_HALF / 2u], nout[AU_HALF / 2u];
-        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f;
+        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f * NAM_OUT_TRIM;
         uint32_t t1 = fm1_ticks(), f;
         void (*volatile run)(struct a2l *, const a2l_t *, a2l_t *, uint32_t) = a2l_process;
         for (f = 0; f < AU_HALF / 2u; f++)
@@ -1321,6 +1347,18 @@ static void log_dump(void)                        /* every record as F0 7D 'J' '
     ota_wire_send(msg, 7);
 }
 
+/* v0.13.14 (JBH): the HSB divider (SYS_DIV bits 0..7, SDK: hsb_clk = sys_pll / div), set from RAM: the flash clock is
+ * derived from it. Not kept across a reset. Test: does a slower bus stop the two-core faults? */
+__attribute__((section(".ram_text"), noinline, used)) static void hsb_div_ram(uint32_t v)
+{
+    uint32_t i;
+    __asm__ volatile("csync" ::: "memory");
+    *(volatile uint32_t *)0x10008u = (*(volatile uint32_t *)0x10008u & ~0xFFu) | (v & 0xFFu);
+    __asm__ volatile("csync" ::: "memory");
+    for (i = 0; i < 1000u; i++)
+        __asm__ volatile("" ::: "memory");
+}
+
 /* CPU clock probe: 200000 iterations of a fixed loop timed with TIMER4 (24 MHz); the loop's
  * instruction count is read from the disassembly (build/fw/juicebox.dis, clk_loop) */
 static __attribute__((noinline)) uint32_t clk_loop(uint32_t n)
@@ -1329,6 +1367,23 @@ static __attribute__((noinline)) uint32_t clk_loop(uint32_t n)
     while (n--)
         __asm__ volatile("nop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop\n\tnop" ::: "memory");
     return fm1_ticks() - t0;
+}
+
+/* v0.13.17: the two-core NAM on (boot and JBN): core supply, core 1's write limits, core 1 started (once), the
+ * pipeline on, the screen updated. VDC14 is already 1.50 V (jb_main) */
+static void nam_start(void)
+{
+    fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
+    fm1_delay_ms(2);
+    c1_guard_setup();
+    if (!c1_ok)
+        c1_ok = fm1_cpu1_start() == 0;
+    prof_start();
+    pipe_primed = 0;
+    nam_on = nam_ok && c1_ok;
+    text_at(8, 4, "                             ", C_HOT, C_BG);
+    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM A2-Lite: ON",
+            nam_on ? C_HOT : C_ERR, C_BG);
 }
 
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
@@ -1592,12 +1647,19 @@ static void debug_service(void)                   /* our SysEx; anything else st
         k = 5u + ota_pack7((const uint8_t *)r, 24, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
-    } else if (n == 15u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'Y') {
-        /* JBY X Y s (X, Y: 5 x 7 bits each): RAM bank test. Core 1 reads a 4 KB pattern at X (mr_job), core 0 reads
-         * one at Y back to back (+ poll), both checked. Reply: core 1 reads/1024, bad, core 0 reads/1024, bad, done */
-        static uint8_t msg[40];
+    } else if ((n == 15u || n == 16u) && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'Y') {
+        /* JBY X Y s [mode] (X, Y: 5 x 7 bits each): RAM bank test. Core 1 reads a 4 KB pattern at X (mr_job), core 0
+         * reads one at Y back to back (+ poll), both checked. v0.13.12 mode bits (v0.13.11 reset the chip ~12 ms in):
+         * 1 = no profiler, 2 = core 0 only polls, 4 = core 1 not started (core 0 alone for s seconds);
+         * v0.13.13: 8 = core 1 writes and reads back (mw_job), 16 = core 0 runs the NAM front (float) instead of reading.
+         * Reply: core 1 rounds (x 1024 words), bad, core 0 rounds, bad, done */
+        static uint8_t msg[72];
+        static a2l_t din[AU_HALF / 2u], dlin[AU_HALF / 2u * A2L_C], dhs[AU_HALF / 2u * A2L_C];
         volatile uint32_t *x, *y;
-        uint32_t r[5], i, k, t0, xa = 0, ya = 0, secs = p[14] ? p[14] : 1u, bad0 = 0, rounds0 = 0;
+        uint32_t r[11], i, k, t0, xa = 0, ya = 0, secs = p[14] ? p[14] : 1u, bad0 = 0, rounds0 = 0;
+        uint32_t ba0 = 0, bv0 = 0, be0 = 0;
+        const uint32_t mode = n == 16u ? p[15] : 0u;
+        int run1;
         for (i = 0; i < 5u; i++) {
             xa |= (uint32_t)p[4 + i] << (7u * i);
             ya |= (uint32_t)p[9 + i] << (7u * i);
@@ -1616,23 +1678,41 @@ static void debug_service(void)                   /* our SysEx; anything else st
             FM1_C1_SYNC();
             fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
             fm1_delay_ms(2);
-            if (!c1_ok)
+            if (!(mode & 4u) && !c1_ok)
                 c1_ok = fm1_cpu1_start() == 0;
-            prof_start();
-            if (c1_ok && fm1_cpu1_run(mr_job, 24000000u * secs)) {
+            if (!(mode & 1u))
+                prof_start();
+            run1 = !(mode & 4u) && c1_ok && fm1_cpu1_run(mode & 8u ? mw_job : mr_job, 24000000u * secs);
+            if (run1 || (mode & 4u)) {
                 t0 = fm1_ticks();
-                while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (secs + 5u) * 1000000u * FM1_TICKS_PER_US) {
-                    for (i = 0; i < MR_WORDS; i++)
-                        bad0 += y[i] != MR_PAT((uint32_t)(uintptr_t)(y + i));
+                while (run1 ? fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (secs + 5u) * 1000000u * FM1_TICKS_PER_US
+                            : fm1_ticks() - t0 < secs * 1000000u * FM1_TICKS_PER_US) {
+                    if (mode & 16u) {
+                        void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+                        if (nam_ok)
+                            front(&nam, din, dlin, dhs, AU_HALF / 2u);
+                    } else if (!(mode & 2u))
+                        for (i = 0; i < MR_WORDS; i++) {
+                            uint32_t v = y[i], e = MR_PAT((uint32_t)(uintptr_t)(y + i));
+                            if (v != e) {
+                                if (!bad0) {
+                                    ba0 = (uint32_t)(uintptr_t)(y + i); bv0 = v; be0 = e;
+                                }
+                                bad0++;
+                            }
+                        }
                     rounds0++;
-                    if (!(rounds0 & 7u))
+                    if (!(rounds0 & 7u) || (mode & 18u))
                         poll();
+                    FM1_C1_SYNC();
                 }
             }
         }
         r[0] = mr_res[0]; r[1] = mr_res[1]; r[2] = rounds0; r[3] = bad0; r[4] = fm1_c1_mb.done == fm1_c1_mb.job;
+        r[5] = mr_res[2]; r[6] = mr_res[3]; r[7] = mr_res[4];     /* core 1's first bad word: address, value, expected */
+        r[8] = ba0; r[9] = bv0; r[10] = be0;                      /* core 0's */
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'Y';
-        k = 5u + ota_pack7((const uint8_t *)r, 20, msg + 5);
+        k = 5u + ota_pack7((const uint8_t *)r, 44, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'Q') {
@@ -1681,27 +1761,25 @@ static void debug_service(void)                   /* our SysEx; anything else st
         static uint8_t msg[16];
         uint32_t st[2], k;
         ota_frame_done();
-        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
-        fm1_delay_ms(2);
-        c1_guard_setup();
-        if (!c1_ok)
-            c1_ok = fm1_cpu1_start() == 0;
-        prof_start();
-        pipe_primed = 0;
-        nam_on = nam_ok && c1_ok;
+        nam_start();
         nam_dbg_marks = 1;
         st[0] = c1_ok; st[1] = nam_on;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'N';
         k = 5u + ota_pack7((const uint8_t *)st, 8, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
-    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'V') {
+    } else if ((n == 5u || n == 6u) && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'V') {
         /* P33 analog registers 0x00..0x1F; p[4] 1..15 = set SYSVDD_VOL_SEL (P3_ANA_CON9 bits 3..0) to that
-         * level first (0.93 V + 0.03 V x level), 0x7F = read only */
+         * level first (0.93 V + 0.03 V x level), 0x7F = read only. v0.13.15: p[5] 0..7 = VDC14_VOL_SEL (P3_ANA_CON6
+         * bits 2..0, 1.25 V + 0.05 V x level; the SYSVDD LDO's input), set before SYSVDD */
         static uint8_t msg[64];
         uint8_t r[32];
         uint32_t i, k;
         ota_frame_done();
+        if (n == 6u && p[5] <= 7u) {
+            fm1_p33_write(0x06, (uint8_t)((fm1_p33_read(0x06) & 0xF8u) | p[5]));
+            fm1_delay_ms(2);
+        }
         if (p[4] <= 15u) {
             fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | p[4]));
             if (p[4] >= 11u)
@@ -1892,6 +1970,27 @@ static void debug_service(void)                   /* our SysEx; anything else st
         k = 5u + ota_pack7((const uint8_t *)st, 64, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'B') {
+        ota_frame_done();                         /* v0.13.15: reboot (a clean state after a test left core 1 stuck) */
+        fm1_delay_ms(20);
+        fm1_reboot();
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'H') {
+        /* JBH d: HSB divider field := d (0..3). Reply: SYS_DIV before, after, clk_loop(200000) ticks */
+        static uint8_t msg[24];
+        uint32_t st[3], k;
+        ota_frame_done();
+        st[0] = *(volatile uint32_t *)0x10008u;
+        if (p[4] <= 3u) {
+            fm1_irq_off();
+            FL_FAR(hsb_div_ram)(p[4]);
+            fm1_irq_on();
+        }
+        st[1] = *(volatile uint32_t *)0x10008u;
+        st[2] = clk_loop(200000u);
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'H';
+        k = 5u + ota_pack7((const uint8_t *)st, 12, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'R') {
         ota_frame_done();
         au_in_max = au_clip_in = au_clip_out = au_us_max = 0;   /* reset the audio statistics */
@@ -1989,6 +2088,10 @@ static void jb_main(void)
     uint32_t t_boot, shown = 0xFFu, rescue_ok;
 
     usb_start();                                  /* 1. USB + update entry first */
+    /* v0.13.16: VDC14 (P3_ANA_CON6 bits 2..0, the SYSVDD LDO's input) 1.40 V -> 1.50 V. At 1.40 V the two cores at
+     * 240 MHz under write traffic misread single bits (core 0 fetched code from au_rx and faulted); at 1.50 V: 0 errors
+     * (JBY modes 9/25, 20 s) and the two-core NAM ran 120 s at 2700 us/block (docs/07, v0.13.15). */
+    fm1_p33_write(0x06, (uint8_t)((fm1_p33_read(0x06) & 0xF8u) | VDC14_LEVEL));
     STAGE(3);
     t_boot = now_ms();
     delay_poll(20);
@@ -2068,14 +2171,12 @@ static void jb_main(void)
     /* Two cores need a higher core supply on this board: at the default SYSVDD 1.26 V a busy core 1 makes the
      * chip misbehave (v0.10.x: hangs, brown-out-like resets, USB / audio DMA stalls); 1.32 V (SYSVDD_VOL_SEL 13,
      * P3_ANA_CON9 bits 3..0; the SDK's own range goes to 1.38 V) ran every JB5 load clean. */
-    c1_ok = 0;                                    /* v0.11.1: NAM (two cores) only on JBN, to find what breaks it */
+    c1_ok = 0;
     nam_on = 0;
-    text_at(8, 4, "                             ", C_HOT, C_BG);
-    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM A2-Lite: ON",
-            nam_on ? C_HOT : C_ERR, C_BG);
     led_init();
     led_on = 1;
     audio_start();
+    nam_start();                                  /* v0.13.17: NAM on at boot again (stable since VDC14 = 1.50 V) */
     STAGE(9);
     {
     uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_adc = 0, t_meter = 0, t_led = 0, t_cpu = 0, i;

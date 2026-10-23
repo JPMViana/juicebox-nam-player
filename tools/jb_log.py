@@ -48,6 +48,7 @@ def main():
 
     inp = mido.open_input(names[0], callback=rx)
     out = mido.open_output([n for n in mido.get_output_names() if n.startswith(names[0][:12])][0])
+    time.sleep(0.4)                                   # a SysEx sent right after opening the port is lost
     out.send(mido.Message("sysex", data=b"\x7DJBL"))
     t0 = time.time()
     while not done and time.time() - t0 < 5:

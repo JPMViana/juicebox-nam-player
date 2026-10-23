@@ -35,6 +35,99 @@ com `tools/bb_install.py`).
 - Próximos passos: (a) testar JB5 modos 2/3 e a carga real com inteiros nos dois núcleos;
   (b) kernel otimizado em assembly num núcleo; (c) se (a) passar, NAM em ponto fixo nos dois núcleos.
 
+## v0.13.15 – v0.13.16 (2026-10-23) — **resolvido: VDC14 em 1,50 V; NAM estável nos dois núcleos**
+
+- **Causa**: a 240 MHz, com os dois núcleos ativos e escrita densa na RAM, o núcleo 0 lia **bits trocados** (ex.:
+  `[0x01C70504] = 0xad8ffe61`, esperado `0x8d8ffe61`, só o bit 29). Num endereço de retorno ou numa instrução, isso
+  desviava o fluxo para dados (`au_rx`) → exceção → reset. Não era conflito de banco nem bug de lógica.
+- **VDC14** (`P3_ANA_CON6` bits 2–0, 1,25 V + 0,05 V × nível) é a entrada do LDO do SYSVDD. Padrão 1,40 V (nível 3).
+  Subir só o SYSVDD não resolvia; subir o VDC14 resolve:
+
+  | VDC14 | SYSVDD | JBY modo 9 (núcleo 1 escreve, núcleo 0 lê) |
+  |---|---|---|
+  | 1,40 V | 1,32 V | reset em ~12 ms |
+  | 1,40 V | 1,38 V | 15 539 bits errados em 46 M leituras (núcleo 0) |
+  | **1,50 V** | 1,38 V | **0 erros** (5 s ×2, 20 s, 20 s com float = modo 25) |
+  | **1,50 V** | 1,32 V | **0 erros** (10 s) |
+
+- **NAM em dois núcleos com VDC14 = 1,50 V e SYSVDD = 1,32 V: 120 s sem falha, 2700 us/bloco (máx. 2706; limite
+  2902), núcleo 1 nunca atrasado.**
+- **v0.13.16 (`BlackBox_964`)**: o firmware põe o VDC14 em 1,50 V no boot (`VDC14_LEVEL`, logo após `usb_start`).
+  O NAM continua desligado no boot; liga por USB (`tools/jb_nam_on.py`).
+- Ferramentas novas: `tools/jb_volt.py --vdc14 N`, `tools/jb_reboot.py` (JBB), `tools/jb_hsb.py` (JBH: o divisor do HSB
+  divide também a CPU, 240 → 120 MHz; a 120 MHz tudo passava, foi o que apontou para margem elétrica), JBY com o
+  primeiro erro de cada núcleo.
+- **v0.13.17 (`BlackBox_965`)**: `nam_start()` (boot e JBN) liga o NAM **no boot** e atualiza o visor. Antes, o boot
+  deixava o 2º núcleo desligado de propósito e o visor mostrava "NAM: 2o NUCLEO FALHOU" mesmo sem falha.
+- Modelo embutido: `reference/NeuralAmpModelerCore/example_models/A2.nam` (exemplo do NAM Core, sem nome de
+  equipamento; metadados: 48 kHz, loudness -26,4 dB, input 14,76 dBu). O pedal roda a ~44,1 kHz, então o modelo sai
+  levemente deslocado em frequência. Pendente: carregar `.nam` próprio pelo USB e decidir a taxa.
+- Pendências: (1) teste longo com áudio real e a saída -12 dB (`NAM_OUT_TRIM`); (2) ~~ligar o NAM no boot~~ (v0.13.17); (3) corrigir o
+  profiler (para após 12 amostras) e o log de boot (só guarda 1 registro); (4) limpar os testes JB2–JB9/JBY quando não
+  forem mais úteis.
+
+## v0.13.12 – v0.13.13 (2026-10-23, manhã) — não é conflito de banco
+
+- **O JBY da 958/959 derrubava o próprio pedal** cerca de 12 ms após começar: o uptime (`crumb.ms`, 0x01C7C0B8)
+  voltava a zero e nunca vinha resposta. Os quadros USB de 14–17 bytes chegam certos (`sx_frame` lido com o JBM).
+- **v0.13.12 (`BlackBox_960`)**: JBY com byte de modo (1 = sem profiler, 2 = núcleo 0 só atende o USB,
+  4 = núcleo 1 parado) e `csync` a cada volta do laço do núcleo 0. Com isso, **todos os modos passam**, inclusive o 0.
+- **Bancos (JBY, núcleo 1 lendo 0x01C60000, 20 s cada)**: núcleo 0 a 64 KB, 32 KB, 4 KB, **mesmo endereço**,
+  pool (0x01C30000) e `.bss` (0x01C0BA2C) → **0 erros em ~360 M + 377 M leituras, sem reboot**, mesma vazão em
+  todos. Leituras densas dos dois núcleos não conflitam, em lugar nenhum.
+- JB6 na 960 (núcleo 0 com o front em float): região 1 (`.bss`, travava na 958) e região 2 → 0 erros em 20 s.
+- **O NAM em dois núcleos (`jb_nam_on.py`) continua caindo em 5–10 s** (reboot; o pedal volta em passthrough).
+- **O profiler para depois de 12 amostras** (TIMER5 deixa de disparar ~12 ms após `prof_start`), então o PC
+  registrado no boot não é o do instante da queda. Precisa ser corrigido antes de servir para achar a trava.
+- `tools/jb_log.py`: faltava a pausa de 0,4 s depois de abrir a porta (a primeira SysEx se perdia → "no answer").
+- **Hipótese nova**: o que o pipeline tem e os testes não têm é **escrita** do núcleo 1 na RAM com o núcleo 0
+  em float (v0.12.0 já pegou o núcleo 1 escrevendo fora dos buffers; JB9 + front em float também falha).
+  **v0.13.13 (`BlackBox_961`, compilada, ainda não gravada)**: JBY modo 8 = núcleo 1 escreve e relê o padrão
+  (`mw_job`), modo 16 = núcleo 0 roda o front em float. Plano: `jb_bank.py X Y 20 M` com M = 8, 16, 24
+  (8 + 16), nas mesmas regiões.
+- v0.13.13 também reduz a saída do NAM em **-12 dB** (`NAM_OUT_TRIM` 0,25, com o MASTER no máximo); é um primeiro
+  valor, a ser ajustado ouvindo.
+
+### Resultados da v0.13.13 (`BlackBox_961`) — a falha é escrita do núcleo 1 + acesso denso do núcleo 0
+
+| JBY (modo) | Núcleo 1 | Núcleo 0 | Resultado |
+|---|---|---|---|
+| 1 / 0 | lê | lê | ok (20 s, 0 erros) |
+| 17 | lê | front em float | ok |
+| 11 | **escreve** + relê | só USB | ok (10,6 mil voltas de 4 KB/s, 0 erros) |
+| 9 | **escreve** + relê | lê | **reset** em ~12 ms (volta 129) ou ~3 s |
+| 25 | **escreve** + relê | front em float | **reset** |
+
+- Independe da região: núcleo 1 escrevendo no pool (0x01C30000), na RAM alta (0x01C60000) ou na RAMTEXT
+  (0x01C02000) → reset. Depois de vários resets seguidos o pedal entrou no **carregador de resgate** (`ota-?`), como
+  projetado.
+- O reset é uma **exceção do núcleo 0** (`fm1_crash`: vec 1, `p3_rst` = 0, ou seja, sem watchdog nem queda de tensão):
+  PC = 0x01C09818, **dentro do buffer de áudio `au_rx`**; ETM só com saltos dentro dele; RETS = 0x02001742 (`poll`,
+  logo após `call led_write`). O núcleo 0 passou a executar dados: uma instrução ou um endereço de retorno lido errado,
+  o mesmo tipo de defeito do bit 21 no RETS do núcleo 1 (v0.12.3).
+- Endereços úteis (v0.13.13): uptime `crumb.ms` 0x01C7C0B8, `fm1_crash` 0x01C7C000 (noinit), `boot_rec` muda a cada build
+  (ver `build/fw/juicebox.syms`).
+- O cache de dados do SDK só cobre endereços ≥ 0x04000000 (SDRAM), então coerência de cache não explica a falha.
+- Suspeita seguinte: **clock do barramento**. `SYS_DIV` (0x10008) = 0x00010200, ou seja, divisor do HSB = 0 (barramento no
+  clock do sistema). O SDK tem `system_clock_hsb_lsb_div()` (`hsb_clk = sys_pll / div`, 1..4).
+  **v0.13.14 (`BlackBox_962`)**: comando `JBH d` (`tools/jb_hsb.py D`) muda esse divisor em tempo de execução, a partir da
+  RAM, e mede o clock da CPU. Plano: `jb_hsb.py 1`, depois JBY modo 9/25 e o NAM.
+
+### Resultados da v0.13.14 (`BlackBox_962`) — é margem de tempo a 240 MHz
+
+- `JBH 1` (divisor do HSB = 1) divide **também a CPU**: `clk_loop` de 8333 us → 16667 us (240 → 120 MHz).
+- **A 120 MHz tudo passa**: JBY modo 9 (20 s, duas combinações de regiões) e **modo 25 (núcleo 1 escrevendo + front em
+  float, o caso do NAM)** → 0 erros, sem reset. A falha é de margem de tempo do chip com os dois núcleos a 240 MHz.
+- Tensões (P33): `P3_ANA_CON6` = 0x0b → **VDC14 = 1,40 V** (entrada do LDO do SYSVDD; o SDK usa 1,40 V e SYSVDD 1,26 V
+  por padrão). Com SYSVDD em 1,38 V a folga do LDO é de só 20 mV.
+- 240 MHz + SYSVDD 1,38 V, modo 9 (5 s): **sem reset**, mas 4,3 M leituras erradas no núcleo 1 e 19 M (56 %) no núcleo 0,
+  e o **núcleo 1 sofreu uma exceção** (`EMU_MSG` = 1, parado no tratador). Os testes seguintes deram 0 voltas no núcleo 1
+  (`job 9, done 5`), então os números precisam ser repetidos depois de reiniciar o pedal.
+- O SDK (`cpu/wl82/debug.c`, `exception_auto_fix_config`) tem uma "correção automática de exceção" que sobe VDDIOM e
+  SYSVDD e, por último, baixa o clock da SDRAM: a JieLi trata exceções desse tipo como problema de tensão/clock.
+- Próximo firmware: comando de reboot; JBV também com VDC14 (`P3_ANA_CON6` bits 0–2, 1,25–1,60 V); JBY devolvendo o
+  primeiro endereço e valor errados dos dois núcleos (para ver se são bits de endereço trocados, como o bit 21 do RETS).
+
 ## v0.13.x (2026-10-23) — NAM em dois núcleos: ponto fixo no núcleo 1, travas por conflito de RAM
 
 **Estado ao parar (v0.13.11, `BlackBox_958`)**: o pedal liga com o NAM desligado (passthrough, seguro).

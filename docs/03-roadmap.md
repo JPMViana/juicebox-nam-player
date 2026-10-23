@@ -48,7 +48,9 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
 - [ ] Adicionar codec/áudio (passthrough limpo), depois footswitches/LEDs
 - [ ] Tela: identificar o controlador e os pinos (`screen_task` no app de fábrica) e portar o `lcd.c`/`gfx.c` do Felucca
 - [ ] Interface própria: nome do modelo NAM, IR on/off, volume/gain, nível de entrada
-- [ ] Adicionar A2-Lite no 2º núcleo (o Felucca já usa o 2º núcleo do AC791N: `FELUCCA_CPU2`)
+- [x] A2-Lite nos dois núcleos (front em float no núcleo 0, back em ponto fixo no núcleo 1): estável com VDC14 = 1,50 V,
+  2700 us/bloco (v0.13.16, [07](07-firmware-armaria.md))
+- [ ] NAM ligado no boot + teste longo com áudio real
 - [ ] Alternativa de menor esforço, se o port emperrar: patch do `app.bin` de fábrica
   trocando só o motor ANN do bloco AMP
 
