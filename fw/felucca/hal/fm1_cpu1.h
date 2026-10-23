@@ -48,8 +48,8 @@ typedef struct {
     volatile uint32_t bad, bad_job, bad_done, bad_fn;   /* jobs it would not run: how many, the last one */
     uint32_t pad1[10];
 } fm1_c1_mb_t;
-static fm1_c1_mb_t fm1_c1_mb __attribute__((aligned(64)));
-volatile uint32_t fm1_c1_trace;                 /* breadcrumbs (fm1_cpu1.S, fm1_c1_main) */
+static fm1_c1_mb_t fm1_c1_mb __attribute__((aligned(64), section(".c1_bss.mb")));
+volatile uint32_t fm1_c1_trace __attribute__((section(".c1_bss.trace")));                 /* breadcrumbs (fm1_cpu1.S, fm1_c1_main) */
 static uint8_t fm1_c1_on;                       /* started and answering: core 0 may hand it work */
 #define FM1_C1_CHECK(fn, arg, job) ((uint32_t)(uintptr_t)(fn) ^ (arg) ^ (job) * 0x9E3779B1u)
 static uint8_t fm1_c1_gave_up;                  /* 1 = it read a wrong job, 2 = it did not finish one */
@@ -75,6 +75,14 @@ void __attribute__((section(C1_MAIN_SECTION), noreturn, used)) fm1_c1_main(void)
     *(volatile uint32_t *)0x1EEF2E0u = hi;
     *(volatile uint32_t *)0x1EEF2E4u = lo;
     *(volatile uint32_t *)0x1EEF2D0u = (*(volatile uint32_t *)0x1EEF2D0u & ~((1u << 2) | (0x1Fu << 16))) | (1u << 3);
+#ifdef FM1_C1_EXCEPTIONS
+    /* Juice-Box: its CPU exception on (a write outside its windows, a bad bus access, its stack limit), so a
+     * fault lands in fm1_fault_c (its own record) instead of passing silently */
+    *(volatile uint32_t *)0x1EEF2D4u = 0xFFFFFFFFu;              /* EMU_MSG clear */
+    *(volatile uint32_t *)0x1EEF300u = (*(volatile uint32_t *)0x1EEF300u & ~0xF0u) | 0xF0u;
+    __asm__ volatile("%0 = icfg" : "=r"(lo));
+    __asm__ volatile("icfg = %0\n\tcsync\n\tsti" ::"r"(lo | 0x100u) : "memory");
+#endif
     fm1_c1_trace = 0xC1000002;
     done = fm1_c1_mb.done;
     fm1_c1_mb.alive = 1;

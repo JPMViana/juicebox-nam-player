@@ -1,0 +1,4 @@
+região 0 RAM baixa 0x01C08000 (antiga pilha do núcleo 1): 34221056 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 794 fronts
+região 1 RAM .bss: 34219008 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 794 fronts
+região 2 RAM alta livre 0x01C60000: 34177024 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 794 fronts
+região 3 RAMTEXT livre 0x01C02000: 34219008 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 794 fronts

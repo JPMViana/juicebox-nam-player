@@ -35,20 +35,34 @@ com `tools/bb_install.py`).
 - Próximos passos: (a) testar JB5 modos 2/3 e a carga real com inteiros nos dois núcleos;
   (b) kernel otimizado em assembly num núcleo; (c) se (a) passar, NAM em ponto fixo nos dois núcleos.
 
-## v0.11.x (2026-10-23) — segundo núcleo: conclusão
+## v0.11.x – v0.12.x (2026-10-23) — segundo núcleo: o que falha e o que funciona
 
-- **Tensão do núcleo**: SYSVDD padrão 1,26 V (`P3_ANA_CON9` = nível 11). Com 1,32 V (nível 13) as cargas
-  curtas de dois núcleos (JB5, só registradores) passam; com 1,26 V travam. 1,35/1,38 V não resolvem o resto.
-- **Laço de espera do núcleo 1 na flash** (não na RAM): necessário (RAM + RAM trava o chip).
-- **JB2** (pipeline real do NAM, 10 blocos, sem áudio/USB): **2386 us/bloco < 2902** — cabe.
-- **Uso real contínuo** (v0.11.x): após 20–60 s o núcleo 0 reinicia ou o USB morre; o registro de falha
-  em `.noinit` aparece inteiro com `0x7F800001` (NaN em float): escritas fora dos limites, coerente com
-  o "core 1 lê palavras erradas sob carga" documentado pelo Felucca/Jangada.
-- O firmware de fábrica usa **um núcleo** (`CPU_CORE_NUM 1`) e o Felucca deixa o segundo desligado por padrão.
-- **Decisão**: voltar a um núcleo; buscar o desempenho com clock 360 MHz (o `isd_config` do BlackBox pede
-  360 MHz; recalcular divisores de áudio/USB) + kernel em assembly.
-- Ferramentas novas: `tools/jb_volt.py` (P33/SYSVDD), `tools/jb_nam_on.py`, `tools/jb_crash.py` (registro de
-  falha, vetores do Felucca), `tools/jb_peek.py` (leitura de RAM).
+- **Tensão do núcleo**: SYSVDD padrão 1,26 V (`P3_ANA_CON9` nível 11); usamos 1,32 V (nível 13) quando o
+  núcleo 1 trabalha. Laço de espera do núcleo 1 na flash (RAM + RAM trava o chip).
+- **Ferramentas de diagnóstico** (todas pelo USB):
+  - unidade de debug do chip (`corex2`, 0x1EEE000, do `cpu/wl82/debug.c` do SDK AC79): **janelas de proteção
+    de escrita por núcleo** (`WR_LIMITn`, `C1_WR_LIMIT_EN`) e exceções de acesso inválido ao barramento (`DBG_EN`);
+  - **registradores do núcleo 1 legíveis pelo núcleo 0** (`q32DSP(1)` em 0x1EEF200: r0..r15, RETS, SP, PC);
+  - exceção habilitada no núcleo 1 com registro próprio (registradores + pilha na hora da falha);
+  - `tools/jb_c1.py` (JBQ), `tools/jb_crash.py` (JBF), `tools/jb_peek.py` (JBM), `tools/jb_volt.py` (JBV).
+- **v0.12.0**: com as janelas, o núcleo 1 foi pego escrevendo **fora dos buffers** dentro de `layer_run`
+  (bloco 214, ~0,6 s após ligar o NAM); o pedal seguiu vivo (núcleo 1 parado com segurança).
+- **v0.12.3**: retrato do núcleo 1 após uma falha com float: `RETS = 0x02200a32` (certo: `0x02000a32`) — o
+  endereço de retorno voltou da pilha **com o bit 21 a mais**, o defeito descrito pelo Jangada.
+- **Testes (núcleo 0 rodando o front do NAM em float ao mesmo tempo):**
+
+  | Teste | Núcleo 1 | Resultado |
+  |---|---|---|
+  | JB6: lê padrões fixos em 4 regiões da RAM | inteiro | 0 erros em ~140 M leituras |
+  | JB8: recursão profunda verificada (pilha) | inteiro | 0 erros em 474 mil recursões / 120 s |
+  | JB7: cadeia de float verificada | **float** | o pedal cai (watchdog) |
+  | pipeline do NAM (v0.10–v0.12.2) | **float** | falha em 0,6–60 s |
+
+- **Conclusão**: nesta unidade **o núcleo 1 é confiável só com inteiros**. Plano: núcleo 0 roda a primeira metade
+  do A2-Lite em float; o núcleo 1 roda a segunda metade em **ponto fixo** (pesos Q2.29, ativações Q8.23,
+  acumulador 64 bits); o núcleo 0 converte na entrada e na saída (nenhuma instrução de float no núcleo 1).
+- Tudo que o núcleo 1 usa (pilhas, mailbox, `nam`, `pipe`) foi para a RAM alta (seção `.c1_bss`, 0x01C50000).
+- Um núcleo só não basta: o melhor laço possível (~3 ciclos/MAC) daria ~3050 us por bloco (> 2902).
 
 ## v0.2.x (2026-10-22) — Juice-Box, gravado e rodando (v0.2.2 = `BlackBox_906`)
 

@@ -1,0 +1,22 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
+== +3s
+c1 trace 00000000  job 0  done 0  bad 0
+== +6s
+c1 trace 00000000  job 0  done 0  bad 0
+== +9s
+c1 trace 00000000  job 0  done 0  bad 0
+== +12s
+c1 trace 00000000  job 0  done 0  bad 0
+== +15s
+c1 trace 00000000  job 0  done 0  bad 0
+== +18s
+c1 trace 00000000  job 0  done 0  bad 0
+== +21s
+c1 trace 00000000  job 0  done 0  bad 0
+== +24s
+c1 trace 00000000  job 0  done 0  bad 0
+== +27s
+c1 trace 00000000  job 0  done 0  bad 0
+== +30s
+c1 trace 00000000  job 0  done 0  bad 0

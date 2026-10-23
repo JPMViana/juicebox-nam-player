@@ -1,0 +1,4 @@
+região 1 RAM .bss: 35191808 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 792 fronts
+região 2 RAM alta livre 0x01C60000: 35051520 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 792 fronts
+região 3 RAMTEXT livre 0x01C02000: 35193856 leituras, 0 erradas (0.00e+00), núcleo 0 rodou 792 fronts
+região 0 pilha do núcleo 1 (0x01C08040): 35151872 leituras, 377608 erradas (1.07e-02), núcleo 0 rodou 792 fronts  1ª: [0x01c09014] = 0x17c904bf (esperado 0xdcd3b471, xor 0xcb1ab0ce)

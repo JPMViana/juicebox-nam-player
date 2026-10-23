@@ -10,7 +10,8 @@ MEMORY
     XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0xA0160
     RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x6000
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 72K
-    POOL   (rw)  : ORIGIN = 0x01C1A000, LENGTH = 0x5A000
+    POOL   (rw)  : ORIGIN = 0x01C1A000, LENGTH = 0x36000
+    C1RAM  (rw)  : ORIGIN = 0x01C50000, LENGTH = 0x20000
     NOINIT (rw)  : ORIGIN = 0x01C7C000, LENGTH = 0x3D50
 }
 SECTIONS
@@ -20,10 +21,12 @@ SECTIONS
     _rt_load = LOADADDR(.ram_text);
     .c1_text : { _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .; } > RAMTEXT AT > XIP
     _c1_load = LOADADDR(.c1_text);
+    .lowtest (NOLOAD) : { *(.lowtest*) } > RAM   /* v0.12.4: first in RAM, where core 1's stack used to be (JB6) */
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);
     .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) . = ALIGN(4); _bss_end = .; } > RAM
     .pool (NOLOAD) : { _pool_start = .; *(.pool*) . = ALIGN(4); _pool_end = .; } > POOL
+    .c1_bss (NOLOAD) : { . = ALIGN(64); _c1b_start = .; *(.c1_bss*) . = ALIGN(4); _c1b_end = .; } > C1RAM
     .noinit (NOLOAD) : { *(.noinit*) } > NOINIT
     _guard0 = 0x01C74000; _ustack_lo = 0x01C74100; _ustack_top = 0x01C7A000;
     _guard1 = 0x01C7A000; _sstack_lo = 0x01C7A100; _sstack_top = 0x01C7C000;

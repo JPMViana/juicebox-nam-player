@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.11.5"
+#define JB_VERSION "v0.12.5"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_940"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_946"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_940"
+#define OTA_LOADER_ID "ota-BlackBox_946"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -53,6 +53,7 @@
 #include "fm1_flash.h"
 #include "fm1_irq.h"                     /* exception vectors + crash record (Felucca) */
 #define C1_MAIN_SECTION ".text.c1main"
+#define FM1_C1_EXCEPTIONS 1               /* v0.12: core 1 faults are caught (fm1_cpu1.h) */
 #include "fm1_cpu1.h"                    /* the second core (Felucca / fm1-x0x / Melodee / Jangada, GPL-3.0) */
 #include "libc.c"
 
@@ -93,7 +94,6 @@ static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers thro
 static void led_pwm_tick(void);
 static uint8_t led_on;
 
-static uint32_t poll_stage_ret;                   /* the stage to restore after poll's own markers */
 static void poll(void)                          /* watchdog, USB at ~2 kHz, audio halves, LED PWM */
 {
     audio_service();
@@ -556,7 +556,7 @@ static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
 /* v0.7 output diagnostics: MOD = guitar / 440 Hz test tone; AMP = the DAC word format */
 static volatile uint8_t au_tone, au_fmt = 4;      /* RJ24: measured right (tools/jb_measure.py, v0.7.1) */
 /* NAM A2-Lite (nam/a2lite.c) on the guitar (L) input; MOD toggles it */
-static struct a2l nam;
+static struct a2l nam __attribute__((section(".c1_bss.nam")));   /* v0.12.4: what core 1 reads, high RAM */
 static a2l_t nam_ring[A2L_RING_FRAMES * A2L_C] __attribute__((section(".pool")));
 static volatile uint8_t nam_ok, nam_on, c1_ok;
 static uint32_t nam_us, nam_us_max;
@@ -564,7 +564,7 @@ static uint32_t nam_us, nam_us_max;
  * block of extra latency, 2.9 ms). Slot n & 1 holds block n's input and the front's lin / hsum. */
 static struct {
     a2l_t in[2][AU_HALF / 2u], lin[2][AU_HALF / 2u * A2L_C], hsum[2][AU_HALF / 2u * A2L_C], out[2][AU_HALF / 2u];
-} pipe;
+} pipe __attribute__((section(".c1_bss.pipe")));
 static uint32_t pipe_blk;
 static uint8_t pipe_primed;
 static uint8_t pipe_busy;                         /* core 1 still owns a job (never held mid-job: on this chip a
@@ -631,6 +631,158 @@ __attribute__((noinline, used)) static void x_iload(uint32_t n)
 __attribute__((noinline, used)) static void nam_back_job(uint32_t slot)
 {
     a2l_back(&nam, pipe.in[slot], pipe.lin[slot], pipe.hsum[slot], pipe.out[slot], AU_HALF / 2u);
+}
+
+/* v0.12.1 (JB6): core 1 reads a known pattern for 2 s while core 0 runs the NAM front; misreads counted per
+ * RAM region (Jangada's finding: core 1 reads wrong words under load; where?) */
+#define MR_WORDS 1024u
+static uint32_t mr_test_buf[MR_WORDS];
+static uint32_t mr_low_buf[MR_WORDS] __attribute__((section(".lowtest")));   /* 0x01C08000: core 1's stack before v0.12.4 */
+static volatile uint32_t *mr_base;
+static volatile uint32_t mr_res[6];               /* reads (x 1024), misreads, first: address, value, expected; done */
+#define MR_PAT(a) ((uint32_t)(a) * 0x9E3779B1u ^ 0x5A5AA5A5u)
+__attribute__((noinline, used)) static void mr_job(uint32_t ticks)
+{
+    volatile uint32_t *b = mr_base;
+    uint32_t t0 = FM1_C1_T4, rounds = 0, bad = 0, i;
+    while (FM1_C1_T4 - t0 < ticks) {
+        for (i = 0; i < MR_WORDS; i++) {
+            uint32_t v = b[i], e = MR_PAT((uint32_t)(uintptr_t)(b + i));
+            if (v != e) {
+                if (!bad) {
+                    mr_res[2] = (uint32_t)(uintptr_t)(b + i); mr_res[3] = v; mr_res[4] = e;
+                }
+                bad++;
+            }
+        }
+        rounds++;
+    }
+    mr_res[0] = rounds;
+    mr_res[1] = bad;
+}
+
+/* v0.12.3 (JB7): float on both cores at once. A deterministic float chain with an integer check word
+ * folded in, run back to back and compared with the core's own result from before the other core started */
+__attribute__((noinline)) static uint32_t fp_chain(float a, float b, uint32_t n, uint32_t *ichk)
+{
+    float x = 1.0f, y = 0.5f, z = 0.25f;
+    uint32_t i, k = 0x12345678u;
+    for (i = 0; i < n; i++) {
+        x = x * a + b;
+        y = y * b + x * 0.5f;
+        z = z * a - y * 0.25f + 1.0f;
+        k = (k ^ i) * 0x01000193u + (k >> 7);
+    }
+    *ichk = k;
+    { union { float f; uint32_t u; } c; c.f = x + y * 3.0f + z * 7.0f; return c.u; }
+}
+static volatile uint32_t fp_go, fp_ready, fp_res1[5];   /* core 1: runs, bad, first value, its reference, ichk bad */
+__attribute__((noinline, used)) static void fp_job(uint32_t ticks)
+{
+    uint32_t ref, rk, v, kk, runs = 0, bad = 0, kbad = 0, t0;
+    ref = fp_chain(0.999f, 0.001f, 500u, &rk);
+    fp_ready = 1;
+    FM1_C1_SYNC();
+    while (!fp_go)
+        FM1_C1_SYNC();
+    t0 = FM1_C1_T4;
+    while (FM1_C1_T4 - t0 < ticks) {
+        v = fp_chain(0.999f, 0.001f, 500u, &kk);
+        if (v != ref) {
+            if (!bad)
+                fp_res1[2] = v;
+            bad++;
+        }
+        if (kk != rk)
+            kbad++;
+        runs++;
+    }
+    fp_res1[0] = runs; fp_res1[1] = bad; fp_res1[3] = ref; fp_res1[4] = kbad;
+}
+
+/* v0.12.5 (JB8): integer work with deep calls on core 1 (return addresses and spills through its stack, where
+ * v0.12.3 saw a RETS read back with bit 21 set), checked against core 0's own result */
+__attribute__((noinline)) static uint32_t int_rec(uint32_t d, uint32_t x)
+{
+    uint32_t a, b;
+    if (!d)
+        return x * 0x01000193u ^ (x >> 11);
+    a = int_rec(d - 1u, x + 1u);
+    b = int_rec(d - 1u, a ^ x);
+    return (a + (b << 3)) ^ (b >> 5) ^ d;
+}
+static volatile uint32_t ir_res[4];               /* runs, bad, first value, reference */
+__attribute__((noinline, used)) static void ir_job(uint32_t ticks)
+{
+    uint32_t t0 = FM1_C1_T4, runs = 0, bad = 0, v;
+    while (FM1_C1_T4 - t0 < ticks) {
+        v = int_rec(10u, 0x1234u);
+        if (v != ir_res[3]) {
+            if (!bad)
+                ir_res[2] = v;
+            bad++;
+        }
+        runs++;
+    }
+    ir_res[0] = runs;
+    ir_res[1] = bad;
+}
+
+/* v0.12: the debug unit (corex2, 0x1EEE000; the AC79 SDK's cpu/wl82/debug.c) guards core 1 while the NAM runs:
+ * every address it has no business writing is a write-limit window for it alone (C1_WR_LIMIT_EN), and bad bus
+ * accesses raise an exception (DBG_EN, as the SDK's debug_init) instead of reading junk */
+#define CX2(o) (*(volatile uint32_t *)(0x1EEE000u + (o)))
+static uint32_t c1_win[8][2], c1_nwin;
+static void c1_guard_setup(void)
+{
+    uint32_t a[10][2], g[12][2], n = 0, ng = 0, i, j, lo = 0x01C00000u;
+#define C1_ALLOW(p, sz) (a[n][0] = (uint32_t)(uintptr_t)(p), a[n][1] = a[n][0] + (uint32_t)(sz), n++)
+    C1_ALLOW(_c1_ustack, (uint32_t)(uintptr_t)_c1_sstack_top - (uint32_t)(uintptr_t)_c1_ustack);
+    C1_ALLOW(&fm1_c1_mb, sizeof fm1_c1_mb);
+    C1_ALLOW(&nam, sizeof nam);
+    C1_ALLOW(&pipe, sizeof pipe);
+    C1_ALLOW(a2l_back_z, sizeof a2l_back_z);
+    C1_ALLOW(nam_ring, sizeof nam_ring);
+    C1_ALLOW(&fm1_c1_trace, 4);
+    C1_ALLOW(&fm1_c1_crash, sizeof fm1_c1_crash);
+    C1_ALLOW(fm1_c1_regs, sizeof fm1_c1_regs);
+    C1_ALLOW(ir_res, sizeof ir_res);
+    for (i = 1; i < n; i++)                       /* by address */
+        for (j = i; j && a[j - 1][0] > a[j][0]; j--) {
+            uint32_t t0 = a[j][0], t1 = a[j][1];
+            a[j][0] = a[j - 1][0]; a[j][1] = a[j - 1][1]; a[j - 1][0] = t0; a[j - 1][1] = t1;
+        }
+    for (i = 0; i < n; i++) {                     /* the gaps between them (under 256 bytes: left open) */
+        if (a[i][0] > lo + 256u) {
+            g[ng][0] = lo; g[ng][1] = a[i][0] - 1u; ng++;
+        }
+        if (a[i][1] > lo)
+            lo = (a[i][1] + 3u) & ~3u;
+    }
+    g[ng][0] = lo; g[ng][1] = 0x01EEEFFFu; ng++;  /* above them: RAM, vectors, peripherals (not its own EMU / ICFG) */
+    while (ng > 7u) {                             /* 8 windows: the smallest gaps stay open */
+        uint32_t m = 0;
+        for (i = 1; i < ng; i++)
+            if (g[i][1] - g[i][0] < g[m][1] - g[m][0])
+                m = i;
+        for (i = m; i + 1u < ng; i++) {
+            g[i][0] = g[i + 1][0]; g[i][1] = g[i + 1][1];
+        }
+        ng--;
+    }
+    c1_win[0][0] = 0; c1_win[0][1] = 0x01BFFFFFu; /* below RAM: system registers (0x10000: the reset) */
+    for (i = 0; i < ng; i++) {
+        c1_win[i + 1u][0] = g[i][0]; c1_win[i + 1u][1] = g[i][1];
+    }
+    c1_nwin = ng + 1u;
+    CX2(0x34Cu) = 0;                              /* C1_WR_LIMIT_EN off while they change */
+    for (i = 0; i < c1_nwin; i++) {
+        CX2(0x2C0u + 4u * i) = c1_win[i][0];      /* WR_LIMITn_L */
+        CX2(0x280u + 4u * i) = c1_win[i][1];      /* WR_LIMITn_H (inclusive) */
+    }
+    CX2(0x248u) = 0xFFFFFFFFu;                    /* DBG_MSG_CLR */
+    CX2(0x34Cu) = (1u << c1_nwin) - 1u;           /* core 1 only */
+    CX2(0x340u) |= (0x3Fu << 16) | (0x3u << 4) | (1u << 11);   /* DBG_EN: bus invalid (both cores), AXI, c1 write limit */
 }
 static uint32_t au_h, au_b15[2];                  /* software half index; CON0 bit 15 histogram (diagnostic) */
 static volatile int32_t au_gain_force = -1;      /* >= 0: USB-set Q16 gain overrides MASTER (JBC) */
@@ -1136,6 +1288,159 @@ static void debug_service(void)                   /* our SysEx; anything else st
         }
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'M'; msg[5] = 0x7F; msg[6] = 0xF7;
         ota_wire_send(msg, 7);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '6') {
+        /* JB6 r: misread census, region r: 0 = core 1's own stack, 1 = RAM (.bss), 2 = free high RAM 0x01C60000,
+         * 3 = free RAMTEXT 0x01C02000. Core 0 runs a2l_front + poll meanwhile. Reply: 6 words */
+        static uint8_t msg[48];
+        static a2l_t din[AU_HALF / 2u], dlin[AU_HALF / 2u * A2L_C], dhs[AU_HALF / 2u * A2L_C];
+        volatile uint32_t *b;
+        uint32_t i, k, t0, fronts = 0;
+        ota_frame_done();
+        b = p[4] == 0 ? (volatile uint32_t *)mr_low_buf : p[4] == 1 ? mr_test_buf
+          : p[4] == 2 ? (volatile uint32_t *)0x01C60000u : (volatile uint32_t *)0x01C02000u;
+        for (i = 0; i < MR_WORDS; i++)
+            b[i] = MR_PAT((uint32_t)(uintptr_t)(b + i));
+        mr_base = b;
+        for (i = 0; i < 6u; i++)
+            mr_res[i] = 0;
+        FM1_C1_SYNC();
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_delay_ms(2);
+        if (!c1_ok)
+            c1_ok = fm1_cpu1_start() == 0;
+        if (c1_ok && fm1_cpu1_run(mr_job, 24000000u * 2u)) {
+            t0 = fm1_ticks();
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < 3000000u * FM1_TICKS_PER_US) {
+                void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+                if (nam_ok)
+                    front(&nam, din, dlin, dhs, AU_HALF / 2u);
+                fronts++;
+                poll();
+                FM1_C1_SYNC();
+            }
+            mr_res[5] = fm1_c1_mb.done == fm1_c1_mb.job ? fronts : 0xEEEEEEEEu;
+        } else
+            mr_res[5] = 0xDDDDDDDDu;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '6';
+        k = 5u + ota_pack7((const uint8_t *)mr_res, 24, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '7') {
+        /* JB7 m: core 1 runs fp_job for 2 s; core 0 meanwhile: m = 0 integer work + poll, 1 = the same float
+         * chain (checked), 2 = the NAM front. Reply: core 1 runs, bad, first, ref, ichk bad; core 0 runs, bad */
+        static uint8_t msg[64];
+        uint32_t r[8], i, k, t0, ref0, rk0, kk, v, runs0 = 0, bad0 = 0;
+        static a2l_t din[AU_HALF / 2u], dlin[AU_HALF / 2u * A2L_C], dhs[AU_HALF / 2u * A2L_C];
+        ota_frame_done();
+        ref0 = fp_chain(0.999f, 0.001f, 500u, &rk0);
+        fp_go = fp_ready = 0;
+        for (i = 0; i < 5u; i++)
+            fp_res1[i] = 0;
+        FM1_C1_SYNC();
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_delay_ms(2);
+        if (!c1_ok)
+            c1_ok = fm1_cpu1_start() == 0;
+        if (c1_ok && fm1_cpu1_run(fp_job, 24000000u * 2u)) {
+            t0 = fm1_ticks();
+            while (!fp_ready && fm1_ticks() - t0 < 100000u * FM1_TICKS_PER_US)
+                FM1_C1_SYNC();
+            fp_go = 1;
+            FM1_C1_SYNC();
+            t0 = fm1_ticks();
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < 3000000u * FM1_TICKS_PER_US) {
+                if (p[4] == 1u) {
+                    for (i = 0; i < 8u; i++) {
+                        v = fp_chain(0.999f, 0.001f, 500u, &kk);
+                        bad0 += v != ref0 || kk != rk0;
+                        runs0++;
+                    }
+                } else if (p[4] == 2u) {
+                    void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+                    if (nam_ok)
+                        front(&nam, din, dlin, dhs, AU_HALF / 2u);
+                    runs0++;
+                } else {
+                    for (i = 0, kk = 1; i < 20000u; i++)
+                        kk = kk * 0x01000193u + i;
+                    bad0 += kk == 0;
+                    runs0++;
+                }
+                poll();
+                FM1_C1_SYNC();
+            }
+        }
+        r[0] = fp_res1[0]; r[1] = fp_res1[1]; r[2] = fp_res1[2]; r[3] = fp_res1[3]; r[4] = fp_res1[4];
+        r[5] = runs0; r[6] = bad0; r[7] = fm1_c1_mb.done == fm1_c1_mb.job;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '7';
+        k = 5u + ota_pack7((const uint8_t *)r, 32, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == '8') {
+        /* JB8 s: ir_job on core 1 for s seconds, the NAM front + poll on core 0; core 1 under its guards */
+        static uint8_t msg[48];
+        static a2l_t din[AU_HALF / 2u], dlin[AU_HALF / 2u * A2L_C], dhs[AU_HALF / 2u * A2L_C];
+        uint32_t r[6], k, t0, fronts = 0, secs = p[4] ? p[4] : 1u;
+        ota_frame_done();
+        ir_res[0] = ir_res[1] = ir_res[2] = 0;
+        ir_res[3] = int_rec(10u, 0x1234u);
+        FM1_C1_SYNC();
+        fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
+        fm1_delay_ms(2);
+        c1_guard_setup();
+        if (!c1_ok)
+            c1_ok = fm1_cpu1_start() == 0;
+        if (c1_ok && fm1_cpu1_run(ir_job, 24000000u * secs)) {
+            t0 = fm1_ticks();
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - t0 < (secs + 1u) * 1000000u * FM1_TICKS_PER_US
+                   && fm1_c1_crash.magic != FM1_CRASH_MAGIC) {
+                void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+                if (nam_ok)
+                    front(&nam, din, dlin, dhs, AU_HALF / 2u);
+                fronts++;
+                poll();
+                FM1_C1_SYNC();
+            }
+        }
+        r[0] = ir_res[0]; r[1] = ir_res[1]; r[2] = ir_res[2]; r[3] = ir_res[3]; r[4] = fronts;
+        r[5] = (fm1_c1_mb.done == fm1_c1_mb.job) | (fm1_c1_crash.magic == FM1_CRASH_MAGIC) << 1;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = '8';
+        k = 5u + ota_pack7((const uint8_t *)r, 24, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'Q') {
+        /* core 1's registers (q32DSP(1), 0x1EEF200: r0..r15, RETI..PCRS), its EMU / ETM, the debug unit, the
+         * windows and core 1's own fault record: 48-byte chunks, index byte, 0x7F ends */
+        static uint32_t w[160];
+        static uint8_t msg[96];
+        uint32_t i, k, nw = 0, b;
+        ota_frame_done();
+        for (i = 0; i < 32u; i++)
+            w[nw++] = *(volatile uint32_t *)(0x1EEF200u + 4u * i);
+        for (i = 0; i < 4u; i++)
+            w[nw++] = *(volatile uint32_t *)(0x1EEF2D0u + 4u * i);
+        for (i = 0; i < 5u; i++)
+            w[nw++] = *(volatile uint32_t *)(0x1EEF3C0u + 4u * i);
+        w[nw++] = CX2(0x244u); w[nw++] = CX2(0x340u); w[nw++] = CX2(0x344u); w[nw++] = CX2(0x348u);
+        w[nw++] = CX2(0x34Cu); w[nw++] = FM1_WRERR(); w[nw++] = fm1_c1_trace;
+        w[nw++] = fm1_c1_mb.job; w[nw++] = fm1_c1_mb.done; w[nw++] = fm1_c1_mb.bad; w[nw++] = c1_nwin;
+        for (i = 0; i < 8u; i++)
+            w[nw++] = c1_win[i][0];
+        for (i = 0; i < 8u; i++)
+            w[nw++] = c1_win[i][1];
+        for (i = 0; i < sizeof fm1_c1_crash / 4u; i++)
+            w[nw++] = ((const uint32_t *)&fm1_c1_crash)[i];
+        for (i = 0; i < 48u; i++)
+            w[nw++] = fm1_c1_regs[i];
+        for (b = 0; b < nw * 4u; b += 48u) {
+            uint32_t nb = nw * 4u - b > 48u ? 48u : nw * 4u - b;
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'Q'; msg[5] = (uint8_t)(b / 48u);
+            k = 6u + ota_pack7((const uint8_t *)w + b, nb, msg + 6);
+            msg[k++] = 0xF7;
+            ota_wire_send(msg, k);
+        }
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'Q'; msg[5] = 0x7F; msg[6] = 0xF7;
+        ota_wire_send(msg, 7);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'F') {
         static uint8_t msg[96];
         uint32_t k;
@@ -1151,6 +1456,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
         ota_frame_done();
         fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | 13u));
         fm1_delay_ms(2);
+        c1_guard_setup();
         if (!c1_ok)
             c1_ok = fm1_cpu1_start() == 0;
         pipe_primed = 0;
@@ -1445,6 +1751,7 @@ static void rescue_enter(void)                    /* never returns */
 /* ------------------------------------------------------------------ main --- */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _rt_start[], _rt_end[], _rt_load[], _pool_start[], _pool_end[], _c1_start[], _c1_end[], _c1_load[];
+extern uint32_t _c1b_start[], _c1b_end[];
 
 static void jb_main(void)
 {
@@ -1469,6 +1776,13 @@ static void jb_main(void)
         boot_rec.rst_src = fm1_crash.emu;
         boot_rec.p3_rst = (uint8_t)fm1_crash.count;
         boot_rec.wdt_con = (uint8_t)(fm1_crash.dbg & 0xFFu);
+        log_write();
+        boot_rec.magic = 0x32434A42u;             /* "BJC2": DBG_MSG, write-limit errors, branch trace */
+        boot_rec.boots = fm1_crash.dbg;
+        boot_rec.prev_stage = fm1_crash.wrerr;
+        boot_rec.prev_ms = fm1_crash.etm[0];
+        boot_rec.prev_loops = fm1_crash.etm[1];
+        boot_rec.rst_src = fm1_crash.uptime_ms;
         log_write();
         fm1_crash.magic = 0;
     }
@@ -1670,6 +1984,8 @@ void fm1_cstart(void)
     for (d = _bss_start; d < _bss_end; d++)
         *d = 0;
     for (d = _pool_start; d < _pool_end; d++)
+        *d = 0;
+    for (d = _c1b_start; d < _c1b_end; d++)
         *d = 0;
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++)
         *d = *s;

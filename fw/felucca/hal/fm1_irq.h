@@ -47,11 +47,18 @@ typedef struct {
 #if FM1_CPU1_USED
     uint32_t core;                           /* 1 = the second core's (its sp on its stacks, hal/fm1_cpu1.h) */
 #endif
+    uint32_t wrerr;                          /* Juice-Box: C0 | C1 << 8 | PRP << 16 write-limit error numbers */
 } fm1_crash_t;
 /* Not static: .noinit holds whatever the last run (or power-on) left, and a
  * file-local object would let the compiler assume its zero initial value and
  * fold the magic check away. */
 fm1_crash_t fm1_crash __attribute__((section(".noinit")));
+#if FM1_CPU1_USED
+fm1_crash_t fm1_c1_crash __attribute__((section(".c1_bss.crash")));                     /* Juice-Box: core 1's record, in RAM it may write (its write limits) */
+uint32_t fm1_c1_regs[16 + 32] __attribute__((section(".c1_bss.crash")));                /* its r0..r15 at the fault, then 32 words of its stack from sp */
+#endif
+#define FM1_WRERR() (*(volatile uint32_t *)0x1EEE360u | *(volatile uint32_t *)0x1EEE364u << 8 | \
+                     *(volatile uint32_t *)0x1EEE368u << 16)
 
 extern const char fm1_fatal_stubs[];
 static void fm1_fault(const fm1_crash_t *c);   /* application: report, then reset */
@@ -107,16 +114,29 @@ void fm1_fault_c(uint32_t *f)
         /* the second core faulted (after Jangada): this runs on it. Its record only, no screen and no reset from
          * here (a reset from core 1 would hold core 1 first, itself: a frozen FM-1). It stops; core 0's next wait
          * times out (fm1_cpu1_wait), holds it, and the FM-1 goes on with one core */
-        fm1_crash.magic = FM1_CRASH_MAGIC;
-        fm1_crash.count = count + 1u;
-        fm1_crash.core = 1;
-        fm1_crash.vec = (f[19] - (uint32_t)(uintptr_t)fm1_fatal_stubs) / 6u - 1u;
-        fm1_crash.pc = f[16];
-        fm1_crash.rets = f[25];
-        fm1_crash.sp = f[24];
-        fm1_crash.psr = f[20];
-        fm1_crash.icfg = f[21];
-        fm1_crash.uptime_ms = *(volatile uint32_t *)0x10804u / 24000u;
+        fm1_crash_t *c = &fm1_c1_crash;       /* (not fm1_crash: .noinit is out of core 1's write windows) */
+        c->count++;
+        c->core = 1;
+        c->vec = (f[19] - (uint32_t)(uintptr_t)fm1_fatal_stubs) / 6u - 1u;
+        c->pc = f[16];
+        c->rets = f[25];
+        c->sp = f[24];
+        c->psr = f[20];
+        c->icfg = f[21];
+        c->emu = *(volatile uint32_t *)0x1EEF2D4u;        /* core 1's EMU_MSG */
+        c->dbg = FM1_DBG_MSG;
+        c->wrerr = FM1_WRERR();
+        for (i = 0; i < 4u; i++)
+            c->etm[i] = *(volatile uint32_t *)(0x1EEF3C4u + 4u * i);   /* core 1's branch trace */
+        c->uptime_ms = *(volatile uint32_t *)0x10804u / 24000u;
+        for (i = 0; i < 16u; i++)
+            fm1_c1_regs[i] = f[i];
+        for (i = 0; i < 32u; i++) {
+            uint32_t a = f[24] + 4u * i;
+            fm1_c1_regs[16u + i] = a >= (uint32_t)(uintptr_t)_c1_ustack && a < (uint32_t)(uintptr_t)_c1_sstack_top
+                                   ? *(volatile uint32_t *)(uintptr_t)a : 0xDEADDEADu;
+        }
+        c->magic = FM1_CRASH_MAGIC;
         __asm__ volatile("csync" ::: "memory");
         for (;;)
             ;
@@ -141,6 +161,7 @@ void fm1_fault_c(uint32_t *f)
     for (i = 0; i < 4u; i++)
         fm1_crash.etm[i] = FM1_ETM_PC(i);
     fm1_crash.early = fm1_crash.uptime_ms < 3000u ? early + 1u : 0u;
+    fm1_crash.wrerr = FM1_WRERR();
 #if FM1_CPU1_USED
     fm1_crash.core = 0;
 #endif

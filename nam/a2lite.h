@@ -58,5 +58,6 @@ void a2l_process(struct a2l *m, const a2l_t *in, a2l_t *out, uint32_t frames);  
  * run after a2l_front of the same block, with the same in, lin and hsum (frames x A2L_C each); a2l_front of the
  * next block may run alongside it (separate layers, rings and scratch). */
 #define A2L_SPLIT 13
+extern a2l_t a2l_back_z[A2L_BLOCK_MAX * A2L_C];
 void a2l_front(struct a2l *m, const a2l_t *in, a2l_t *lin, a2l_t *hsum, uint32_t frames);
 void a2l_back(struct a2l *m, const a2l_t *in, a2l_t *lin, a2l_t *hsum, a2l_t *out, uint32_t frames);

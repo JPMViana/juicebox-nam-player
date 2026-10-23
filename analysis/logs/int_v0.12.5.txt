@@ -1,0 +1,2 @@
+20 s: núcleo 1 78987 recursões, 0 erradas; núcleo 0 rodou 7936 fronts do NAM; terminou True; falha no núcleo 1 False
+120 s: núcleo 1 473922 recursões, 0 erradas; núcleo 0 rodou 47614 fronts do NAM; terminou True; falha no núcleo 1 False

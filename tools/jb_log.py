@@ -64,6 +64,10 @@ def main():
             print(f"    raw {r.hex(' ')}")
         magic, boots, pst, pms, plo = struct.unpack_from("<IIIII", r, 0)
         p3, wdt, failed, pend, resc, warm, vers, _ = r[20:28]
+        if magic == 0x32434A42:
+            print(f"{i:2d}    DBG_MSG {boots:#010x}  erros WR_LIMIT {pst:#08x}  ETM {pms:#010x} {plo:#010x}  "
+                  f"aos {struct.unpack_from('<I', r, 28)[0]} ms")
+            continue
         if magic == 0x52434A42:
             vec, core = boots & 0xFFFF, boots >> 16
             emu = struct.unpack_from("<I", r, 28)[0]

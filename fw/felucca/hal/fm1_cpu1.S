@@ -19,7 +19,7 @@ fm1_c1_entry:
 	reti = fm1_c1_main
 	rti
 
-	.section .bss.c1stack,"aw",@nobits
+	.section .c1_bss.stack,"aw",@nobits	/* Juice-Box: high RAM (core 1 misreads the low RAM, v0.12) */
 	.balign 8
 	.globl _c1_ustack
 _c1_ustack:			/* after rti the core runs on this one: the render's (filled with a mark at start) */
