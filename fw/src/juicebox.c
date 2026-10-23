@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.13.21"
+#define JB_VERSION "v0.13.22"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_972"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_974"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_972"
+#define OTA_LOADER_ID "ota-BlackBox_974"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -604,8 +604,12 @@ static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
 static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
 static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
-#define NAM_OUT_TRIM 2.63f                        /* v0.13.18: +8.4 dB, the model's loudness (-26.4 dB) up to -18 dB as
-                                                   * the NAM plugin normalizes (v0.13.13's -12 dB was far too quiet) */
+/* v0.13.22: the model's loudness normalized to -18 dB as the NAM plugin does (tools/nam2c.py, per model), then
+ * +8 dB (at MASTER full the A2 example peaked at ~0.5 of full scale: too quiet); a soft limiter above 0.7 */
+#define NAM_OUT_BOOST 2.5f
+#define NAM_OUT_TRIM (MODEL_A2LITE_NORM * NAM_OUT_BOOST)
+#define LIM_T (0.7f * 8388607.0f)
+#define LIM_R (8388607.0f - LIM_T)
 static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
 static volatile uint32_t au_clip_in_ev, au_clip_out_ev;   /* clip events, for the screen */
 /* v0.13.20: which half is done is software only (CON0 bit 15 never toggles here): a half lost once (a long
@@ -1119,16 +1123,17 @@ static void audio_service(void)
             au_out_late++;                        /* the DMA already finished the next half: this output is late */
         for (f = 0; f < AU_HALF / 2u; f++) {
             float yf = ran ? (float)pipe.qout[prev][f] * (gf * (1.0f / 8388608.0f)) : 0.0f;
+            float ya = yf < 0.0f ? -yf : yf;
             int32_t y;
             uint32_t ay;
-            if (yf > 8388607.0f) {
-                yf = 8388607.0f;
-                au_clip_out++;
-                au_clip_out_ev++;
-            } else if (yf < -8388608.0f) {
-                yf = -8388608.0f;
-                au_clip_out++;
-                au_clip_out_ev++;
+            if (ya > LIM_T) {                     /* soft knee: approaches full scale, never reaches it */
+                float o = ya - LIM_T;
+                if (o > LIM_R) {                  /* (would have been past full scale: shown as CLIP) */
+                    au_clip_out++;
+                    au_clip_out_ev++;
+                }
+                ya = LIM_T + LIM_R * o / (o + LIM_R);
+                yf = yf < 0.0f ? -ya : ya;
             }
             y = (int32_t)yf;
             ay = (uint32_t)(y < 0 ? -y : y);
@@ -1484,7 +1489,7 @@ static void nam_start(void)
     pipe_primed = 0;
     nam_on = nam_ok && c1_ok;
     text_at(8, 4, "                             ", C_HOT, C_BG);
-    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM A2-Lite: ON",
+    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM: " MODEL_A2LITE_TITLE,
             nam_on ? C_HOT : C_ERR, C_BG);
 }
 
@@ -2458,7 +2463,7 @@ static void jb_main(void)
             if (((din & ~din_old) & (1u << 4)) && nam_ok && c1_ok) {   /* MOD: NAM on / off (A/B) */
                 nam_on ^= 1u;
                 text_at(8, 4, "                             ", C_HOT, C_BG);
-                text_at(8, 4, nam_on ? "NAM A2-Lite: ON" : "NAM: OFF (direto)", C_HOT, C_BG);
+                text_at(8, 4, nam_on ? "NAM: " MODEL_A2LITE_TITLE : "NAM: OFF (direto)", C_HOT, C_BG);
             }
             if ((din & ~din_old) & (1u << 2)) {   /* FX pressed: next routing */
                 static const char *const RT[] = {"SAIDA: ESTEREO", "SAIDA: L -> L+R", "SAIDA: R -> L+R"};

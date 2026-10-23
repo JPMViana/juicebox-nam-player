@@ -45,6 +45,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--product", default="BlackBox_904")
     ap.add_argument("--bump-cfg", action="store_true", help="see tools/bbpkg.py")
+    ap.add_argument("--model", type=Path, default=MODEL, help="the .nam built in (A2 / A2-Lite)")
     a = ap.parse_args()
     if not (PKG / "manifest.json").exists():
         raise SystemExit("analysis/v20_pkg missing: python3 -I tools/bbpkg.py unpack firmware/stock/BlackBox_FACTORY_V20.fwsc analysis/v20_pkg")
@@ -53,7 +54,7 @@ def main():
     subprocess.run([sys.executable, FW / "tools" / "gen_assets.py", gen, "--loader", PKG / "ota.bin",
                     "--png", OUT / "splash_preview.png"], check=True)
 
-    subprocess.run([sys.executable, ROOT / "tools" / "nam2c.py", MODEL, "--header", gen / "model_a2lite.h",
+    subprocess.run([sys.executable, ROOT / "tools" / "nam2c.py", a.model, "--header", gen / "model_a2lite.h",
                     "--name", "MODEL_A2LITE"], check=True)
     inc = ["-I", rel(FW / "felucca" / "hal"), "-I", rel(FW / "felucca" / "src"), "-I", rel(gen), "-I", rel(ROOT / "nam")]
     c1data = "-DA2L_C1_DATA=__attribute__((section(\".c1_bss.z\")))"   # core 1's scratch in its RAM
