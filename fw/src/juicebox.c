@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.13.18"
+#define JB_VERSION "v0.13.20"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_969"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_971"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_969"
+#define OTA_LOADER_ID "ota-BlackBox_971"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -605,6 +605,13 @@ static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MA
                                                    * the NAM plugin normalizes (v0.13.13's -12 dB was far too quiet) */
 static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
 static volatile uint32_t au_clip_in_ev, au_clip_out_ev;   /* clip events, for the screen */
+/* v0.13.20: which half is done is software only (CON0 bit 15 never toggles here): a half lost once (a long
+ * stretch without polls: boot, a model reset, before v0.13.18 every 7th) left au_h on the half the DMA was
+ * filling / playing, for good: each block then began with ~10 samples from elsewhere (heard as hiss and
+ * crackle, NAM on or off; tools/jb_capture.py). The RX words carry 24 bits under a zero byte, so the last
+ * word of each half is set to AU_SENT once read: the half in progress still has it, the finished one not */
+#define AU_SENT 0x5A5A5A5Au
+static uint32_t au_resync;
 static uint32_t au_halves, au_late, au_out_late;   /* au_out_late: halves whose output was written too late */
 static volatile uint8_t au_route = 1;             /* 0 stereo, 1 L to both (default: the guitar is on L), 2 R */
 static volatile uint8_t snap_req, snap_ready, snap_trig;
@@ -627,6 +634,14 @@ static uint32_t pipe_blk, pipe_job_blk;          /* the block number; the block 
 static uint8_t pipe_primed;
 static uint8_t pipe_busy;                         /* core 1 still owns a job (never held mid-job: on this chip a
                                                    * hold during work stalls the bus: USB and the audio DMA stop) */
+/* v0.13.19 (JBW): 48 consecutive NAM blocks as the pedal saw them, from the first loud one (the model reset
+ * there, as a2lx_reset after boot, so the host can run the same blocks from the same state): the raw input
+ * (24-bit, sign-extended) and core 1's raw output (Q8.23, before the gain; call k holds block k - 1's output,
+ * 0x7FFFFFFF where the block had none), for a host comparison against the float model */
+#define CAP_BLK 48u
+static int32_t cap_in[CAP_BLK][AU_HALF / 2u] __attribute__((section(".c1_bss.cap")));
+static int32_t cap_out[CAP_BLK][AU_HALF / 2u] __attribute__((section(".c1_bss.cap")));
+static volatile uint32_t cap_state, cap_n;        /* 0 idle, 1 armed, 2 capturing, 3 done */
 static uint32_t pipe_late, pipe_late_max;         /* blocks core 1 was not done in time; the longest wait (us) */
 
 static volatile uint32_t c1_test_out;
@@ -965,6 +980,8 @@ static void audio_start(void)
     uint32_t i;
     for (i = 0; i < 2u * AU_HALF; i++)
         au_tx[i] = au_rx[i] = 0;
+    au_rx[AU_HALF - 1u] = au_rx[2u * AU_HALF - 1u] = (int32_t)AU_SENT;
+    au_h = 0;
     pa_out(9, 0);                                 /* codec off */
     fm1_delay_ms(5);
     ALNK_CON0 = 0;
@@ -1036,6 +1053,11 @@ static void audio_service(void)
     au_halves++;
     t0 = fm1_ticks();
     au_b15[(ALNK_CON0 >> 15) & 1u]++;
+    if ((uint32_t)au_rx[au_h * AU_HALF + AU_HALF - 1u] == AU_SENT &&
+        (uint32_t)au_rx[(au_h ^ 1u) * AU_HALF + AU_HALF - 1u] != AU_SENT) {
+        au_h ^= 1u;                               /* au_h was on the half in progress */
+        au_resync++;
+    }
     h = au_h;                                     /* v0.7.1 used CON0 bit 15 here: one half never got written */
     au_h ^= 1u;
     in = au_rx + h * AU_HALF;
@@ -1058,7 +1080,21 @@ static void audio_service(void)
                 au_clip_in_ev++;
             }
             nin[f] = (float)x * (1.0f / 8388608.0f);
+            if (cap_state == 1u && ax > (1u << 20))
+                cap_state = 4;                    /* > -18 dBFS: start here */
         }
+        if (cap_state == 4u) {                    /* from a known state, as the host starts: reset (~0.1 s of
+                                                   * no audio), core 1 idle first */
+            uint32_t w0 = fm1_ticks();
+            while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
+                FM1_C1_SYNC();
+            pipe_busy = 0;
+            a2lx_reset(&nam, &namq);
+            cap_state = 2;
+        }
+        if (cap_state == 2u)
+            for (f = 0; f < AU_HALF / 2u; f++)
+                cap_in[cap_n][f] = (int32_t)((uint32_t)in[2u * f] << 8) >> 8;
         jb_stage(81);
         nam_front_slot(slot);                     /* core 0: front of block n */
         jb_stage(82);
@@ -1096,6 +1132,12 @@ static void audio_service(void)
             if (ay > au_peak[1])
                 au_peak[1] = ay;
             out[2u * f] = out[2u * f + 1u] = y;   /* RJ24 */
+        }
+        if (cap_state == 2u) {
+            for (f = 0; f < AU_HALF / 2u; f++)
+                cap_out[cap_n][f] = ran ? pipe.qout[prev][f] : 0x7FFFFFFF;
+            if (++cap_n == CAP_BLK)
+                cap_state = 3;
         }
         if (!pipe_busy && fm1_cpu1_run(nam_back_job, slot)) {   /* v0.13.18: core 1 starts block n's back now,
                                                    * not at the start of the next call: core 0 no longer waits
@@ -1192,6 +1234,7 @@ static void audio_service(void)
         }
     }
 done:
+    au_rx[h * AU_HALF + AU_HALF - 1u] = (int32_t)AU_SENT;   /* read: marked until the DMA fills it again */
     us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
     if (us > au_us_max)
         au_us_max = us;
@@ -2057,10 +2100,24 @@ static void debug_service(void)                   /* our SysEx; anything else st
         st[8] = au_out_late;
         st[9] = gap_max; st[10] = gap_long; st[11] = gap_at;
         gap_max = 0;
-        st[0] = au_halves; st[1] = au_late; st[2] = au_in_max; st[3] = pipe_late;
+        st[0] = au_halves; st[1] = au_resync; st[2] = au_in_max; st[3] = pipe_late;
         st[4] = pipe_late_max; st[5] = au_us_max; st[6] = nam_us; st[7] = nam_us_max;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'S';
         k = 5u + ota_pack7((const uint8_t *)st, 48, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'W') {
+        static uint8_t msg[64];                   /* v0.13.19: p[4] 1 = arm; reply state, count, the buffers, gain */
+        uint32_t st[6], k;
+        ota_frame_done();
+        if (p[4] == 1u) {
+            cap_n = 0;
+            cap_state = 1;
+        }
+        st[0] = cap_state; st[1] = cap_n; st[2] = (uint32_t)cap_in; st[3] = (uint32_t)cap_out;
+        st[4] = au_gain; st[5] = CAP_BLK;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'W';
+        k = 5u + ota_pack7((const uint8_t *)st, 24, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'G') {

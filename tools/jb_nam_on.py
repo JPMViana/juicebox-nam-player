@@ -37,7 +37,7 @@ for k in range(a.watch // 5):
         late += f"  maior intervalo {gm} us (secao {ga}), >400 us: {gl}"
     rate = f"  {(st[0] - prev[0]) / (time.time() - prev[1]):.1f} blocos/s (esperado ~344.7)" if prev else ""
     prev = (st[0], time.time())
-    print(f"+{5 * (k + 1)}s: blocos {st[0]}{rate}  c1 atrasado {st[3]} (maior espera {st[4]} us)  NAM {st[6]} us (max {st[7]}){late}", flush=True)
+    print(f"+{5 * (k + 1)}s: blocos {st[0]}{rate}  ressinc {st[1]}  c1 atrasado {st[3]} (maior espera {st[4]} us)  NAM {st[6]} us (max {st[7]}){late}", flush=True)
 g = ask(b"G", b"G")
 if g:
     names = {0: "topo/poll", 1: "debug_service", 2: "usb_retry", 3: "ota_service", 4: "status", 5: "texto CPU", 6: "snap/LED",
