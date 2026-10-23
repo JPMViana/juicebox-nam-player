@@ -29,6 +29,9 @@ com `tools/bb_install.py`).
 - **v0.10.2 (atual)** + `JB5` (tudo na flash, laços só em registradores): **núcleo 1 em inteiros +
   núcleo 0 em float também trava** (o watchdog reiniciou). Então não é só "float nos dois": até agora só
   inteiro + inteiro na flash (`JB4` modo 3) funcionou. Modos 2/3 do JB5 não rodaram.
+- Faixas internas do A2-Lite (`nam/test/a2lite_ranges.c`, guitarra real, pico de entrada 0,5): pesos ±1,4;
+  entrada das camadas até ~14 (cresce nas últimas); ativações até ~21; soma da head ~41. Ponto fixo
+  proposto: ativações Q8.23 (±256), pesos Q2.29 (±4), produto em 64 bits deslocado 29 → folga > 6×.
 - Próximos passos: (a) testar JB5 modos 2/3 e a carga real com inteiros nos dois núcleos;
   (b) kernel otimizado em assembly num núcleo; (c) se (a) passar, NAM em ponto fixo nos dois núcleos.
 
