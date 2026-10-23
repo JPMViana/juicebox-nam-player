@@ -50,11 +50,14 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
 - [ ] Interface própria: nome do modelo NAM, IR on/off, volume/gain, nível de entrada
 - [x] A2-Lite nos dois núcleos (front em float no núcleo 0, back em ponto fixo no núcleo 1): estável com VDC14 = 1,50 V,
   2700 us/bloco (v0.13.16, [07](07-firmware-armaria.md))
-- [ ] NAM ligado no boot + teste longo com áudio real
+- [x] NAM ligado no boot + teste com guitarra real (v0.13.17–22): caminho de áudio corrigido (metades perdidas,
+  fase da metade do DMA, ADC bloqueante); som "utilizável" com a captura Fender Super Reverb ([07](07-firmware-armaria.md))
+- [ ] Refinar o som: taxa de 48 kHz (ou reamostragem), ganho de entrada, ganho/limitador de saída, IR opcional
 - [ ] Alternativa de menor esforço, se o port emperrar: patch do `app.bin` de fábrica
   trocando só o motor ANN do bloco AMP
 
 ## Fase 5 – Ferramentas para o usuário
-- [ ] Conversor `.nam` (A2) → blob binário compacto (pesos + config)
-- [ ] Upload de modelos via USB (reaproveitar o protocolo do editor ou USB-MSC)
+- [x] Conversor `.nam` (A2) → pesos A2-Lite (`tools/nam2c.py`, com normalização de loudness), embutido pelo
+  `fw/build.py --model` (v0.13.22)
+- [ ] Cliente de carregamento: upload de capturas `.nam` via USB sem recompilar, escolha de captura no pedal
 - [ ] Modo "power amp": saída sem cab/IR, nível de linha ajustável, noise gate antes do NAM

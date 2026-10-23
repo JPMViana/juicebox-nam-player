@@ -4,6 +4,36 @@ Nome: **Juice-Box**, por **João Viana** (até a v0.1.2: armaria-nam). Identidad
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
+## v0.13.18 – v0.13.22 (2026-10-23) — som utilizável: caminho de áudio corrigido, captura do usuário embutida
+
+Primeiro teste com guitarra (v0.13.17, `BlackBox_965`): volume baixo, som picotado e chiado digital. Eram três
+defeitos do caminho de áudio, mais um problema de montagem do teste. O NAM em si estava certo.
+
+| Versão | Pacote | O que mudou | Medido |
+|---|---|---|---|
+| v0.13.18 | `_966`–`_969` | (1) pendências do ALNK limpas **ao detectar** a metade: limpas no fim do bloco, apagavam a da próxima, e 14 % das metades se perdiam. (2) O núcleo 1 começa o back do bloco n no fim da chamada, e o núcleo 0 não espera mais por ele. (3) ADC dos pots **sem bloqueio**, um canal por varredura de 5 ms: as 3 leituras bloqueantes seguravam o áudio por ~670 us a cada 15 ms. (4) `text_at`/`status` chamam `poll()` por linha. | 295 → **344,7 blocos/s**; saídas atrasadas ~40/s → **0**; NAM 2710 → **2455 us/bloco**; maior trecho sem poll 670 → 146 us |
+| v0.13.19 | `_970` | `JBW` + `tools/jb_capture.py` + `nam/test/a2l_cap_host.c`: 48 blocos de entrada crua e saída do núcleo 1, comparados no Mac com o mesmo modelo a partir do mesmo estado (reset no 1º bloco forte) | 125 saltos em 6144 amostras de entrada, **todos nas primeiras ~10 amostras de cada bloco** |
+| v0.13.20 | `_971` | **Metade do DMA ressincronizada**: o `CON0` bit 15 não alterna, então a metade pronta era só contada em software. Uma metade perdida uma vez (boot, reset do modelo, e antes 1 em cada 7) deixava `au_h` na metade em andamento para sempre: estalo a cada 2,9 ms, com ou sem NAM. Agora a última palavra de cada metade lida recebe `0x5A5A5A5A` (as palavras RX têm o byte alto 0): a metade em andamento ainda tem a marca, e `au_h` é corrigido. | 0 saltos; saída do pedal **igual ao host** (diferença 1e-7); 1 ressincronização, no boot |
+| v0.13.21 | `_972` | `JBE` / `tools/jb_quiet.py`: desliga LEDs, PWM ou visor para caçar ruído | o chiado de ciclo de 3–4 s que sobrava (mesmo com o MASTER em 0) é o **terra do cabo USB** (pedal no Mac + saída na interface do mesmo Mac): sem o cabo some, e encostando o cabo na carcaça volta |
+| v0.13.22 | `_973`–`_974` | `fw/build.py --model X.nam` (A2 / A2-Lite); `nam2c` gera `_NORM` (loudness → -18 dB, como o plugin) e `_TITLE` (visor). Saída = normalização × 2,5 (+8 dB) com **limitador suave** acima de 0,7 da escala (CLIP só se passaria do topo). `_974` = **FNDR BFSR VB Edge WRM2 CAB FREE** (Fender Super Reverb 1965, amp+cab, Tone3000) | ponto fixo com essa captura: SNR 125–130 dB contra o float; NAM 2460 us/bloco |
+
+Avaliação do usuário com a `_974`: "ainda não está excelente, mas já está utilizável".
+
+Para testar sem o chiado de terra: grave e meça pelo USB, depois tire o cabo e alimente o pedal por bateria ou carregador
+para ouvir pela interface do mesmo Mac.
+
+Diagnóstico disponível pelo USB:
+- `tools/jb_nam_on.py --no-enable --watch N`: blocos/s, ressincronizações, saídas atrasadas e maior trecho sem poll por seção do loop (`JBS`, `JBG`);
+- `tools/jb_capture.py DIR`: captura e comparação com o host;
+- `tools/jb_quiet.py M`: desliga LEDs, PWM ou visor.
+
+### Pendências / próximos passos
+- Refinar o som: o pedal roda a ~44,1 kHz e as capturas são de 48 kHz (trocar a taxa ou reamostrar); ajuste de
+  ganho de entrada (a guitarra chega a -1,4 dBFS); revisar o ganho e o limitador de saída de ouvido; IR opcional.
+- Usabilidade: cliente para carregar `.nam` pelo USB sem recompilar (hoje: `fw/build.py --model`), escolha de
+  captura no pedal, interface no visor (nome, nível de entrada e de saída).
+- Ainda pendentes: o profiler para após 12 amostras; o log de boot guarda 1 registro.
+
 ## v0.8 – v0.10 (2026-10-22/23) — NAM A2-Lite no pedal
 
 - `nam/a2lite.c`: A2-Lite em C, **idêntico ao NeuralAmpModelerCore oficial** (diferença máx. 5e-7,
