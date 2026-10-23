@@ -175,7 +175,7 @@ A2L_HOT void a2l_front(struct a2l *m, const a2l_t *in, a2l_t *lin, a2l_t *hsum, 
 }
 
 /* layers [A2L_SPLIT, 23) + the head: lin, hsum -> out (own buffers and position: it may run on core 1) */
-a2l_t a2l_back_z[A2L_BLOCK_MAX * A2L_C] __attribute__((section(".c1_bss.z")));          /* a2l_back's scratch (exported: core 1 writes only known buffers) */
+a2l_t a2l_back_z[A2L_BLOCK_MAX * A2L_C] A2L_C1_DATA;          /* a2l_back's scratch (exported: core 1 writes only known buffers) */
 A2L_HOT void a2l_back(struct a2l *m, const a2l_t *in, a2l_t *lin, a2l_t *hsum, a2l_t *out, uint32_t frames)
 {
     a2l_t *const z = a2l_back_z;

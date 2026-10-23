@@ -56,7 +56,14 @@ def main():
     subprocess.run([sys.executable, ROOT / "tools" / "nam2c.py", MODEL, "--header", gen / "model_a2lite.h",
                     "--name", "MODEL_A2LITE"], check=True)
     inc = ["-I", rel(FW / "felucca" / "hal"), "-I", rel(FW / "felucca" / "src"), "-I", rel(gen), "-I", rel(ROOT / "nam")]
-    tc("clang", *NAMFLAGS, "-c", rel(ROOT / "nam" / "a2lite.c"), "-o", rel(OUT / "a2lite.o"))
+    c1data = "-DA2L_C1_DATA=__attribute__((section(\".c1_bss.z\")))"   # core 1's scratch in its RAM
+    tc("clang", *NAMFLAGS, c1data, "-c", rel(ROOT / "nam" / "a2lite.c"), "-o", rel(OUT / "a2lite.o"))
+    tc("clang", *NAMFLAGS, "-c", rel(ROOT / "nam" / "a2lx.c"), "-o", rel(OUT / "a2lx.o"))
+    # core 1's half: integer only (no -mfprev1; checked below: not one float instruction)
+    tc("clang", "-O2", "-fno-builtin", "-Wall", "-mcpu=r3", c1data, "-c", rel(ROOT / "nam" / "a2lq.c"), "-o", rel(OUT / "a2lq.o"))
+    tc("clang", "-O2", "-fno-builtin", "-mcpu=r3", c1data, "-S", rel(ROOT / "nam" / "a2lq.c"), "-o", rel(OUT / "a2lq.s"))
+    if "(f)" in (OUT / "a2lq.s").read_text():
+        sys.exit("nam/a2lq.c: float instructions in core 1's code")
     tc("clang", "-O2", "-fno-builtin", "-mcpu=r3", "-mfprev1", "-c", rel(ROOT / "nam" / "bench_dev.c"), "-o", rel(OUT / "bench_dev.o"))
     tc("clang", *CFLAGS, *inc, f'-DFELUCCA_ID="{a.product}"', "-c", rel(FW / "src" / "juicebox.c"),
        "-o", rel(OUT / "juicebox.o"))
@@ -64,7 +71,7 @@ def main():
     tc("clang", "-c", rel(FW / "felucca" / "hal" / "fm1_cpu1.S"), "-o", rel(OUT / "fm1_cpu1.o"))
     tc("clang", "-c", rel(FW / "felucca" / "hal" / "fm1_vec.S"), "-o", rel(OUT / "fm1_vec.o"))
     elf = OUT / "juicebox.elf"
-    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "fm1_vec.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "bench_dev.o"), "-o", rel(elf))
+    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "fm1_vec.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "a2lx.o"), rel(OUT / "a2lq.o"), rel(OUT / "bench_dev.o"), "-o", rel(elf))
     for sect, name in ((".text", "text.bin"), (".ram_text", "ramtext.bin"), (".c1_text", "c1text.bin"), (".data", "data.bin")):
         (OUT / name).unlink(missing_ok=True)
         tc("common/bin/objcopy", "-O", "binary", "-j", sect, rel(elf), rel(OUT / name))

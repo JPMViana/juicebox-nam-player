@@ -1,0 +1,18 @@
+P3_ANA_CON9 = 0x1d -> SYSVDD nivel 13 = 1.32 V
+JBN (c1_ok, nam_on): (1, 1)
++5s: blocos 13578  c1 atrasado 0 (maior espera 462 us)  NAM 2946 us (max 2949)
++10s: blocos 14449  c1 atrasado 0 (maior espera 462 us)  NAM 2940 us (max 2949)
++15s: blocos 15322  c1 atrasado 0 (maior espera 462 us)  NAM 2946 us (max 2949)
++20s: blocos 16193  c1 atrasado 0 (maior espera 462 us)  NAM 2940 us (max 2949)
++25s: blocos 17065  c1 atrasado 0 (maior espera 462 us)  NAM 2940 us (max 2949)
++30s: blocos 17937  c1 atrasado 0 (maior espera 462 us)  NAM 2940 us (max 2949)
++35s: blocos 18809  c1 atrasado 0 (maior espera 462 us)  NAM 2940 us (max 2949)
++40s: blocos 19681  c1 atrasado 0 (maior espera 462 us)  NAM 2940 us (max 2949)
++45s: blocos 20552  c1 atrasado 0 (maior espera 462 us)  NAM 2942 us (max 2949)
++50s: blocos 21424  c1 atrasado 0 (maior espera 462 us)  NAM 2942 us (max 2949)
++55s: blocos 22296  c1 atrasado 0 (maior espera 462 us)  NAM 2942 us (max 2949)
++60s: blocos 23168  c1 atrasado 0 (maior espera 462 us)  NAM 2942 us (max 2949)
+DBG_MSG 00000000  DBG_EN 003f0030  DBG_CON 00000000  C0_LIM 00  C1_LIM 1f  erros d504d6
+c1 trace c1000002  job 10495  done 10495  bad 0
+janelas proibidas ao núcleo 1: [00000000..01bfffff] [01c00000..01c0e9b7] [01c0e9c8..01c19fff] [01c4d600..01c4ffff] [01c5dbd0..01eeefff]
+núcleo 1 sem falha registrada

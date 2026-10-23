@@ -26,6 +26,10 @@ typedef float a2l_t;
 #ifndef A2L_HOT
 #define A2L_HOT
 #endif
+/* data core 1 works on: the firmware places it in core 1's RAM (section .c1_bss); the host test leaves it empty */
+#ifndef A2L_C1_DATA
+#define A2L_C1_DATA
+#endif
 
 struct a2l_layer {
     uint16_t k, d;                           /* kernel size, dilation */

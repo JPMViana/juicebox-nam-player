@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.12.5"
+#define JB_VERSION "v0.13.0"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_946"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_947"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_946"
+#define OTA_LOADER_ID "ota-BlackBox_947"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -67,6 +67,7 @@ static const uint8_t STR2[] = {20, 3, 'J', 0, 'u', 0, 'i', 0, 'c', 0, 'e', 0, '-
 #include "font.h"
 #include "loader.h"
 #include "a2lite.h"
+#include "a2lx.h"                       /* v0.13: core 1 runs the back half in fixed point */
 #include "model_a2lite.h"
 
 /* A core-0 fault: the record (fm1_crash, .noinit) is logged by the next boot */
@@ -557,6 +558,7 @@ static uint32_t au_in_max, au_clip_in, au_clip_out, au_us_max;
 static volatile uint8_t au_tone, au_fmt = 4;      /* RJ24: measured right (tools/jb_measure.py, v0.7.1) */
 /* NAM A2-Lite (nam/a2lite.c) on the guitar (L) input; MOD toggles it */
 static struct a2l nam __attribute__((section(".c1_bss.nam")));   /* v0.12.4: what core 1 reads, high RAM */
+static struct a2lq namq __attribute__((section(".c1_bss.nam")));  /* v0.13: the back half, fixed point (core 1) */
 static a2l_t nam_ring[A2L_RING_FRAMES * A2L_C] __attribute__((section(".pool")));
 static volatile uint8_t nam_ok, nam_on, c1_ok;
 static uint32_t nam_us, nam_us_max;
@@ -564,6 +566,7 @@ static uint32_t nam_us, nam_us_max;
  * block of extra latency, 2.9 ms). Slot n & 1 holds block n's input and the front's lin / hsum. */
 static struct {
     a2l_t in[2][AU_HALF / 2u], lin[2][AU_HALF / 2u * A2L_C], hsum[2][AU_HALF / 2u * A2L_C], out[2][AU_HALF / 2u];
+    a2lq_t qin[2][AU_HALF / 2u], qlin[2][AU_HALF / 2u * A2L_C], qhs[2][AU_HALF / 2u * A2L_C], qout[2][AU_HALF / 2u];
 } pipe __attribute__((section(".c1_bss.pipe")));
 static uint32_t pipe_blk;
 static uint8_t pipe_primed;
@@ -628,9 +631,19 @@ __attribute__((noinline, used)) static void x_iload(uint32_t n)
 
 /* XIP, not RAM: both cores executing RAM code at the same time lock the chip up (JB2 / JB3 / JB4, v0.9.x);
  * XIP on both is fine (core 1's idle loop stays in RAM, .c1_text, as in Felucca) */
-__attribute__((noinline, used)) static void nam_back_job(uint32_t slot)
+__attribute__((noinline, used)) static void nam_back_job(uint32_t slot)   /* core 1: integer only (v0.13) */
 {
-    a2l_back(&nam, pipe.in[slot], pipe.lin[slot], pipe.hsum[slot], pipe.out[slot], AU_HALF / 2u);
+    a2lq_back(&namq, pipe.qin[slot], pipe.qlin[slot], pipe.qhs[slot], pipe.qout[slot], AU_HALF / 2u);
+}
+
+/* core 0: the float front of the block in slot, then its hand-over to core 1 in Q8.23 */
+static void nam_front_slot(uint32_t slot)
+{
+    void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
+    front(&nam, pipe.in[slot], pipe.lin[slot], pipe.hsum[slot], AU_HALF / 2u);
+    a2lx_to_q(pipe.in[slot], pipe.qin[slot], AU_HALF / 2u);
+    a2lx_to_q(pipe.lin[slot], pipe.qlin[slot], AU_HALF / 2u * A2L_C);
+    a2lx_to_q(pipe.hsum[slot], pipe.qhs[slot], AU_HALF / 2u * A2L_C);
 }
 
 /* v0.12.1 (JB6): core 1 reads a known pattern for 2 s while core 0 runs the NAM front; misreads counted per
@@ -733,19 +746,14 @@ __attribute__((noinline, used)) static void ir_job(uint32_t ticks)
  * accesses raise an exception (DBG_EN, as the SDK's debug_init) instead of reading junk */
 #define CX2(o) (*(volatile uint32_t *)(0x1EEE000u + (o)))
 static uint32_t c1_win[8][2], c1_nwin;
+extern uint32_t _c1b_start[], _c1b_end[];
 static void c1_guard_setup(void)
 {
     uint32_t a[10][2], g[12][2], n = 0, ng = 0, i, j, lo = 0x01C00000u;
 #define C1_ALLOW(p, sz) (a[n][0] = (uint32_t)(uintptr_t)(p), a[n][1] = a[n][0] + (uint32_t)(sz), n++)
-    C1_ALLOW(_c1_ustack, (uint32_t)(uintptr_t)_c1_sstack_top - (uint32_t)(uintptr_t)_c1_ustack);
-    C1_ALLOW(&fm1_c1_mb, sizeof fm1_c1_mb);
-    C1_ALLOW(&nam, sizeof nam);
-    C1_ALLOW(&pipe, sizeof pipe);
-    C1_ALLOW(a2l_back_z, sizeof a2l_back_z);
+    C1_ALLOW(_c1b_start, (uint32_t)(uintptr_t)_c1b_end - (uint32_t)(uintptr_t)_c1b_start);   /* its stacks, mailbox,
+                                                   * the models, the pipe, its scratch and fault record (.c1_bss) */
     C1_ALLOW(nam_ring, sizeof nam_ring);
-    C1_ALLOW(&fm1_c1_trace, 4);
-    C1_ALLOW(&fm1_c1_crash, sizeof fm1_c1_crash);
-    C1_ALLOW(fm1_c1_regs, sizeof fm1_c1_regs);
     C1_ALLOW(ir_res, sizeof ir_res);
     for (i = 1; i < n; i++)                       /* by address */
         for (j = i; j && a[j - 1][0] > a[j][0]; j--) {
@@ -918,10 +926,7 @@ static void audio_service(void)
             pipe_busy = (uint8_t)ran;
         }
         jb_stage(81);
-        {
-            void (*volatile front)(struct a2l *, const a2l_t *, a2l_t *, a2l_t *, uint32_t) = a2l_front;
-            front(&nam, nin, pipe.lin[slot], pipe.hsum[slot], AU_HALF / 2u);   /* core 0: front of block n */
-        }
+        nam_front_slot(slot);                     /* core 0: front of block n */
         jb_stage(82);
         if (ran) {                                /* wait up to 1.5 ms more, never hold it */
             uint32_t w0 = fm1_ticks(), w;
@@ -938,7 +943,7 @@ static void audio_service(void)
             }
         }
         for (f = 0; f < AU_HALF / 2u; f++) {
-            float yf = pipe_primed && ran ? pipe.out[prev][f] * gf : 0.0f;
+            float yf = pipe_primed && ran ? (float)pipe.qout[prev][f] * (gf * (1.0f / 8388608.0f)) : 0.0f;
             int32_t y;
             uint32_t ay;
             if (yf > 8388607.0f) {
@@ -1590,7 +1595,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
             if (b)
                 ran = (uint32_t)fm1_cpu1_run(nam_back_job, prev);
             STAGE(42);
-            front(&nam, pipe.in[slot], pipe.lin[slot], pipe.hsum[slot], AU_HALF / 2u);
+            nam_front_slot(slot);
             STAGE(43);
             if (ran) {
                 uint32_t w0 = fm1_ticks();
@@ -1600,7 +1605,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
                 }
                 if (fm1_ticks() - w0 > wmax)
                     wmax = fm1_ticks() - w0;
-                acc += pipe.out[prev][5];
+                acc += (float)pipe.qout[prev][5];
             }
             STAGE(44);
             t = fm1_ticks() - t;
@@ -1751,7 +1756,6 @@ static void rescue_enter(void)                    /* never returns */
 /* ------------------------------------------------------------------ main --- */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _rt_start[], _rt_end[], _rt_load[], _pool_start[], _pool_end[], _c1_start[], _c1_end[], _c1_load[];
-extern uint32_t _c1b_start[], _c1b_end[];
 
 static void jb_main(void)
 {
@@ -1814,6 +1818,10 @@ static void jb_main(void)
     test_screen();
     text_at(8, 4, "NAM: carregando...", C_HOT, C_BG);
     nam_ok = a2l_load(&nam, MODEL_A2LITE, A2L_NWEIGHTS, nam_ring) == 0;   /* (prewarm: ~6300 samples) */
+    if (nam_ok) {                                 /* v0.13: the back half in fixed point, prewarmed again through it */
+        a2lx_load(&namq, &nam);
+        a2lx_reset(&nam, &namq);
+    }
     /* Two cores need a higher core supply on this board: at the default SYSVDD 1.26 V a busy core 1 makes the
      * chip misbehave (v0.10.x: hangs, brown-out-like resets, USB / audio DMA stalls); 1.32 V (SYSVDD_VOL_SEL 13,
      * P3_ANA_CON9 bits 3..0; the SDK's own range goes to 1.38 V) ran every JB5 load clean. */
