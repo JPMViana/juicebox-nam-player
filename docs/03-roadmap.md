@@ -52,7 +52,7 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
   2700 us/bloco (v0.13.16, [07](07-firmware-armaria.md))
 - [x] NAM ligado no boot + teste com guitarra real (v0.13.17–22): caminho de áudio corrigido (metades perdidas,
   fase da metade do DMA, ADC bloqueante); som "utilizável" com a captura Fender Super Reverb ([07](07-firmware-armaria.md))
-- [ ] Refinar o som: taxa de 48 kHz (ou reamostragem), ganho de entrada, ganho/limitador de saída, IR opcional
+- [ ] Refinar o som: taxa de 48 kHz (ou reamostragem), ganho de entrada, ganho/limitador de saída
 - [ ] Alternativa de menor esforço, se o port emperrar: patch do `app.bin` de fábrica
   trocando só o motor ANN do bloco AMP
 
@@ -61,3 +61,18 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
   `fw/build.py --model` (v0.13.22)
 - [ ] Cliente de carregamento: upload de capturas `.nam` via USB sem recompilar, escolha de captura no pedal
 - [ ] Modo "power amp": saída sem cab/IR, nível de linha ajustável, noise gate antes do NAM
+
+## Fase 6 – Distribuição e código aberto (decisão 2026-11-03)
+- [x] Repositório limpo para publicação: objetos do SDK JieLi e WAVs removidos do histórico
+  (`git filter-repo`), LICENSE GPL-3.0, README atualizado
+- [ ] Modelos fora do app: pesos na região `USR` + comando USB de carga (pré-requisito do instalador)
+- [ ] Instalador para usuários não técnicos (Go, Windows e macOS): instalar o Juice-Box, voltar ao
+  V20 oficial, carregar capturas `.nam`. O V20 é baixado do fabricante e o pacote é montado na
+  máquina do usuário (o `.fwsc` contém partes do fabricante e não é distribuído pronto)
+- [ ] VID:PID próprio no pid.codes (hoje `1209:0001`, PID de teste)
+- [ ] Interface na tela focada em usabilidade
+
+## Fase 7 – IR (depois da primeira versão distribuível)
+- [ ] Carregar IRs pelo instalador. Pode funcionar **sem o NAM ao mesmo tempo** (modo só-IR),
+  porque o NAM já usa ~2700 de 2902 us por bloco
+

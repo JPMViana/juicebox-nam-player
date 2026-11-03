@@ -15,3 +15,16 @@ analysis/v019_check/
 analysis/v20_pkg/
 analysis/disasm/
 analysis/armaria_check/
+
+# binários e objetos do SDK do fabricante (JieLi) — nunca versionar
+analysis/sdk_cpu/
+analysis/sdk_system/
+*.o
+*.fwsc
+*.ufw
+# capturas de áudio e dumps de RAM gerados pelas ferramentas
+analysis/logs/measure/
+analysis/logs/*.bin
+*.wav
+# modelos e IRs de terceiros
+*.nam

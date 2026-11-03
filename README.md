@@ -3,68 +3,88 @@
 **Juice-Box** — firmware NAM para o M-VAVE ANN BlackBox, por **João Viana**.
 
 Firmware alternativo para o pedal **M-VAVE (Sinco) ANN BlackBox**, transformando-o
-em um **player de capturas NAM (Neural Amp Modeler) A2** para uso direto no
-power amp analógico (simulação de cabeçote, sem cab/IR obrigatório).
+em um **player de capturas NAM (Neural Amp Modeler) A2-Lite**, pensado para uso
+direto no retorno de um power amp analógico (simulação de cabeçote, sem cab/IR
+obrigatório).
 
-> Status: **Juice-Box v0.2.2 rodando no pedal** (USB/update, tela com splash, resgate,
-> registro de boot). Em investigação: boot só na bateria cai no resgate. Próximo: entradas e áudio. Veja [docs/04-seguranca.md](docs/04-seguranca.md).
+> **Status (v0.13.22):** o pedal roda uma captura NAM A2-Lite nos dois núcleos, com o
+> áudio estável e som utilizável. A captura ainda é embutida na compilação. Próximos passos:
+> carregar capturas por USB, interface na tela e um instalador para Windows/macOS.
+> Veja [docs/03-roadmap.md](docs/03-roadmap.md).
 
-## Por que é viável (e onde não é)
+> ⚠️ **Projeto em desenvolvimento, ainda sem instalador para o usuário final.** Gravar
+> firmware pode inutilizar o pedal. Leia [docs/04-seguranca.md](docs/04-seguranca.md) antes.
+
+## O que funciona
+
+- Instalação e volta ao firmware de fábrica (V20) **só por USB**, sem gravador
+  (`tools/bb_install.py`, protocolo do M-UPGRADE). Há também um carregador de resgate para
+  quando o boot falha.
+- NAM A2-Lite em tempo real: a primeira metade da rede roda em float no núcleo 0 e a segunda
+  em ponto fixo no núcleo 1 (~2700 µs por bloco de 2902 µs).
+- Conversor de capturas `.nam` (A2) → pesos embarcados, com normalização de volume
+  (`tools/nam2c.py`).
+- Tela própria, mapeamento completo de botões, knobs e footswitches, e registro de boot na flash.
+
+## Por que é viável
 
 | Item | O que sabemos |
 |---|---|
-| SoC | JieLi **AC791N** (família "WL82"), CPU **pi32v2** (derivada do Blackfin) |
-| Clock | `SYS_CLK = 360 MHz` (lido do `isd_config.ini` do firmware V20) |
-| Flash | 1 MB NOR (`0xFF000`), região `USR` de 256 KB para dados do usuário |
-| Firmware | `.fwsc` = container UFW JieLi, criptografado com chip-key `0x980F` — **já conseguimos desempacotar** |
-| NAM A2-Lite | ~1,9 k pesos, **~90 MMAC/s @ 48 kHz** → cabe: pi32v2 tem MAC nativa 64 bits (~50–80 % de 1 núcleo) |
-| NAM A2-Full | ~12 k pesos, **~583 MMAC/s @ 48 kHz** → **não cabe** neste chip |
+| SoC | JieLi **AC791N** (família "WL82"), CPU **pi32v2** (derivada do Blackfin), 2 núcleos |
+| Clock | `SYS_CLK = 360 MHz` |
+| Flash | 1 MB NOR, região `USR` de 256 KB para dados do usuário |
+| Update | USB-MIDI, carregador conferido só por CRC-16 (sem assinatura) |
+| NAM A2-Lite | ~1,9 k pesos, ~90 MMAC/s @ 48 kHz → cabe usando os dois núcleos |
+| NAM A2-Full | ~12 k pesos, ~583 MMAC/s → **não cabe** neste chip |
 
-Detalhes em [docs/02-viabilidade-nam.md](docs/02-viabilidade-nam.md).
+Detalhes em [docs/02-viabilidade-nam.md](docs/02-viabilidade-nam.md) e
+[docs/07-firmware-armaria.md](docs/07-firmware-armaria.md) (histórico de versões).
 
 ## Estrutura
 
 ```
-docs/        documentação técnica e roadmap
-tools/       nam_budget.py, bb_install.py (update USB-MIDI), bbpkg.py (.fwsc), jb_log.py (registro de boot)
-fw/          firmware Juice-Box (fw/build.py)
-nam/         código NAM embarcado (bench/ = kernels de teste pi32v2)
-scripts/     setup de referências e desempacotamento reproduzível
+docs/        documentação técnica, segurança e roadmap (pt-BR)
+fw/          firmware Juice-Box (fw/build.py); fw/felucca/ = HAL/USB/OTA do Felucca
+nam/         kernel NAM A2-Lite em C (float, ponto fixo, testes no host)
+tools/       bb_install.py (update USB-MIDI), bbpkg.py (.fwsc), nam2c.py, jb_*.py (diagnóstico)
+scripts/     setup de referências, desempacotamento do firmware de fábrica, compilador pi32v2
 firmware/    imagens de fábrica (NÃO versionadas – ver firmware/README.md)
-analysis/    saídas de análise (desempacotamento, strings, Ghidra)
+analysis/    notas e logs das sessões no pedal
 reference/   repositórios de terceiros clonados (NÃO versionados)
 ```
 
-## Começando
+## Compilando (desenvolvedores, macOS)
 
-Requisitos (macOS): Docker Desktop, Python 3, `brew install libraqm` (só para compilar o Felucca).
+Requisitos: Docker Desktop, Python 3.
 
 ```bash
-scripts/setup_reference.sh      # clona FM-1-RE, Felucca, jl-misctools, NAM core, etc.
+scripts/setup_reference.sh      # clona FM-1-RE, Felucca, NAM core, etc. em reference/
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
     https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git reference/fw-AC79_AIoT_SDK
 sh reference/Felucca/tools/get_toolchain.sh "$PWD/.toolchain"   # clang pi32v2 da JieLi
-scripts/unpack_stock.sh         # baixa e desempacota o firmware V20 de fábrica
-.venv/bin/pip install mido python-rtmidi
+scripts/unpack_stock.sh         # baixa o firmware V20 oficial (necessário para empacotar)
+python3 -m venv .venv && .venv/bin/pip install mido python-rtmidi
 
-python3 -I tools/nam_budget.py reference/NeuralAmpModelerCore/example_models/A2.nam
-scripts/pi32cc.sh clang -O2 -mcpu=r3 -mfprev1 -S nam/bench/conv_kernel3.c -o /dev/stdout
-.venv/bin/python tools/bb_install.py --list     # portas MIDI (não envia nada)
-.venv/bin/python tools/bb_install.py --info     # identidade do pedal (só leitura)
+.venv/bin/python fw/build.py --model minha_captura.nam     # -> build/fw/*.fwsc
+.venv/bin/python tools/bb_install.py --info                # identidade do pedal (só leitura)
+.venv/bin/python tools/bb_install.py build/fw/<pacote>.fwsc --force
+.venv/bin/python tools/bb_install.py firmware/stock/BlackBox_FACTORY_V20.fwsc   # voltar ao oficial
 ```
 
-## Roadmap resumido
+O pacote gerado contém partes do firmware oficial (cabeçalho e carregador de update),
+por isso **ele é montado localmente** a partir do V20 baixado do fabricante e não é
+distribuído pronto.
 
-0. **Reconhecimento** – firmware, hardware, protocolo de update *(em andamento)*
-1. **Caminho USB comprovado** – toolchain, cliente de update no macOS, ida e volta com o V20 *(sem gravadores)*
-2. **Desmontagem do firmware** – Ghidra pi32v2, mapear pinos, codec e o motor "ANN" atual
-3. **Prova de conceito** – kernel A2-Lite em pi32v2 medido em hardware real
-4. **Firmware próprio** – port do [Felucca](https://github.com/hugelton/Felucca) (FM-1) para o BlackBox + A2-Lite no 2º núcleo
-5. **Ferramentas** – conversor `.nam` → formato embarcado, carregamento via USB
+## Créditos
 
-Roadmap completo: [docs/03-roadmap.md](docs/03-roadmap.md).
+- [Felucca](https://github.com/hugelton/Felucca) (GPL-3.0): base de HAL, USB e OTA do AC791N.
+- [FM-1-RE](https://github.com/AL-255/FM-1-RE): engenharia reversa da mesma plataforma.
+- [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore): arquitetura A2 e modelos.
+- Fonte Inter Tight (OFL, `fw/assets/OFL.txt`).
 
-## Aviso
+## Licença
 
-Projeto não oficial, sem afiliação com M-VAVE/Sinco/JieLi/TONE3000. Gravar
-firmware pode inutilizar o pedal. Use por sua conta e risco.
+GPL-3.0 — veja [LICENSE](LICENSE).
+
+Projeto não oficial, sem afiliação com M-VAVE/Sinco/JieLi/TONE3000. Marcas citadas
+pertencem aos seus donos. Use por sua conta e risco.
