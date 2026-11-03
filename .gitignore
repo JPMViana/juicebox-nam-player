@@ -28,3 +28,6 @@ analysis/logs/*.bin
 *.wav
 # modelos e IRs de terceiros
 *.nam
+
+# instruções locais do assistente
+CLAUDE.md
