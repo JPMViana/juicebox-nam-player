@@ -6,7 +6,7 @@
  * screen with the boot image. No audio, no inputs yet. Interrupts stay off:
  * USB is polled from the main loop, as in Felucca's update loader.
  *
- * Safety (docs/04-seguranca.md):
+ * Safety (docs/04-safety.md):
  *  - USB and the update entry come up before anything else, so a package
  *    (back to the stock V20 included) can always be installed over USB.
  *  - Rescue: the official JieLi update loader is kept staged in flash at
@@ -168,7 +168,7 @@ static void delay_poll(uint32_t ms)
 }
 
 /* --------------------------------------------------------------- display --- */
-/* ST7789 240x240 on SPI1 port A (docs/06-analise-firmware.md): SCK PB6, data PB7, D/C PB5, CS PB1,
+/* ST7789 240x240 on SPI1 port A (docs/06-stock-firmware-analysis.md): SCK PB6, data PB7, D/C PB5, CS PB1,
  * PC7 low (backlight or reset: the stock firmware drives it low first). The visible area is rows 0..239
  * of the 240x320 controller RAM (seen on the pedal with v0.1; the stock init table's RASET 40..279 is
  * only a start-up window). Pin and register sequence copied from the stock init (0x0202A658). */

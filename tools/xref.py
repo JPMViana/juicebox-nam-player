@@ -7,7 +7,7 @@
   xref.py DIS APP.bin --callers 0x2012345       functions that call an address
   xref.py DIS APP.bin --strings-in 0x2012345    strings referenced by the function at an address
 
-The listing comes from analysis/disasm (see docs/06-analise-firmware.md).
+The listing comes from analysis/disasm (see docs/06-stock-firmware-analysis.md).
 Functions are approximated as ranges between call targets.
 """
 import argparse
