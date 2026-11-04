@@ -19,7 +19,7 @@ ou no Windows, usando o cabo USB do pedal. Não é preciso nenhum hardware extra
 
 ## 1. Baixar
 
-Abra o [release mais recente](https://github.com/OWNER/REPO/releases/latest) e baixe:
+Abra o [release mais recente](https://github.com/JPMViana/juicebox-nam-player/releases/latest) e baixe:
 
 | Sistema | Arquivo |
 |---|---|
@@ -123,7 +123,7 @@ apaga as capturas do Juice-Box e instala o V20. Depois disso o pedal volta a fun
 
 ## Relatar um problema
 
-[Abra uma issue](https://github.com/OWNER/REPO/issues/new/choose) (pode ser em português) e anexe o log do app:
+[Abra uma issue](https://github.com/JPMViana/juicebox-nam-player/issues/new/choose) (pode ser em português) e anexe o log do app:
 
 - macOS: `~/Library/Caches/Juice-Box/installer.log` (Finder → Ir → Ir para a Pasta…)
 - Windows: `%LOCALAPPDATA%\Juice-Box\installer.log` (cole na barra de endereço do Explorador)

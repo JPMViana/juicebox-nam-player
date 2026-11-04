@@ -19,7 +19,7 @@ app on macOS or Windows, over the pedal's USB cable. You don't need any extra ha
 
 ## 1. Download
 
-Go to the [latest release](https://github.com/OWNER/REPO/releases/latest) and download:
+Go to the [latest release](https://github.com/JPMViana/juicebox-nam-player/releases/latest) and download:
 
 | System | File |
 |---|---|
@@ -123,7 +123,7 @@ checks it, erases Juice-Box's captures and installs V20. After that the pedal wo
 
 ## Reporting a problem
 
-Please [open an issue](https://github.com/OWNER/REPO/issues/new/choose) and attach the app's log:
+Please [open an issue](https://github.com/JPMViana/juicebox-nam-player/issues/new/choose) and attach the app's log:
 
 - macOS: `~/Library/Caches/Juice-Box/installer.log` (Finder → Go → Go to Folder…)
 - Windows: `%LOCALAPPDATA%\Juice-Box\installer.log` (paste that into the Explorer address bar)

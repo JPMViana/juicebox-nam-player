@@ -10,7 +10,7 @@ Unofficial, not affiliated with M-VAVE / Sinco / JieLi. Installing firmware is a
 | Command line (advanced) | `jbx-<version>-<system>.zip` |
 
 The apps are **not signed** (no paid certificates), so your system will warn you the first time.
-Follow the [user guide](https://github.com/OWNER/REPO/blob/main/docs/user-guide.md) to open them,
+Follow the [user guide](https://github.com/JPMViana/juicebox-nam-player/blob/main/docs/user-guide.md) to open them,
 install Juice-Box and load your captures. Check your download against `SHA256SUMS.txt`.
 
 You can go back to the official M-VAVE firmware at any time from the app (Firmware → Restore official firmware).
