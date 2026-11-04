@@ -26,6 +26,10 @@ com `tools/bb_install.py`).
   Hoje o "+" = host USB conectado.
 - **Mapa dos LEDs**: `BANK_LED[]` é chute; mapear com `l` (bit por bit, a tela mostra `LED 0xNN`).
 - Religar o núcleo 1 sem reiniciar (permitiria salvar sem os ~1,5 s).
+- **Saída de fone (PHONES)**: nunca testada com o Juice-Box (pergunta do usuário em 2026-11-04). O firmware só
+  alimenta o codec externo (I2S ALNK0, mesmo sinal em L e R) → saída principal. Se o fone tiver amplificador com pino
+  de habilitação (ligado pelo firmware de fábrica), ele fica mudo: ouvir com o pedal; se mudo, achar o pino no
+  `app.bin` V20 (GPIOs configurados como saída perto do init do codec, `0x02007490`) e ligá-lo.
 
 ## v0.14.0 – v0.14.2 (2026-11-03) — capturas pelo USB, sem recompilar
 

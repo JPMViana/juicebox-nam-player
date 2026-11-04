@@ -68,8 +68,9 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
   (`git filter-repo`), LICENSE GPL-3.0, README atualizado
 - [x] Capturas fora do app (v0.14.2): 8 slots na VM livre (não na `USR`, que é do firmware oficial) +
   protocolo USB, cliente `tools/jb_models.py` ([07](07-firmware-armaria.md))
-- [ ] Instalador para usuários não técnicos (Go, Windows e macOS): instalar o Juice-Box, voltar ao
-  V20 oficial, carregar capturas `.nam`. O V20 é baixado do fabricante e o pacote é montado na
+- [~] Instalador para usuários não técnicos (Go, Windows e macOS): instalar o Juice-Box, voltar ao
+  V20 oficial, carregar capturas `.nam`. **Núcleo + CLI + janela (macOS) prontos; bug aberto: a janela fica
+  presa em 99 % na gravação** — ver [08-instalador.md](08-instalador.md). O V20 é baixado do fabricante e o pacote é montado na
   máquina do usuário (o `.fwsc` contém partes do fabricante e não é distribuído pronto)
 - [ ] VID:PID próprio no pid.codes (hoje `1209:0001`, PID de teste)
 - [ ] **Backlog — documentação do usuário (EN + PT-BR)**: como baixar, abrir e usar o instalador no Windows e no

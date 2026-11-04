@@ -44,6 +44,7 @@ Detalhes em [docs/02-viabilidade-nam.md](docs/02-viabilidade-nam.md) e
 
 ```
 docs/        documentação técnica, segurança e roadmap (pt-BR)
+installer/   instalador em Go: app gráfico (Wails) e CLI jbx (docs/08-instalador.md)
 fw/          firmware Juice-Box (fw/build.py); fw/felucca/ = HAL/USB/OTA do Felucca
 nam/         kernel NAM A2-Lite em C (float, ponto fixo, testes no host)
 tools/       bb_install.py (update USB-MIDI), bbpkg.py (.fwsc), jb_models.py (capturas), nam2c.py, jb_*.py (diagnóstico)
