@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"juicebox/installer/internal/fwbuild"
 	"juicebox/installer/internal/jlpkg"
@@ -73,6 +74,7 @@ func main() {
 	stockPath := fs.String("stock", "", "the official V20 package (default: download / cache)")
 	title := fs.String("title", "", "the capture's name on the pedal")
 	yes := fs.Bool("yes", false, "do not ask for confirmation")
+	logPath := fs.String("log", "", "write a diagnostics log to this file")
 	var pos []string
 	for len(args) > 0 { // flags anywhere
 		fs.Parse(args)
@@ -89,6 +91,16 @@ func main() {
 	defer be.Close()
 	up := updater.New(be)
 	up.Port = *port
+	if *logPath != "" {
+		lf, err := os.Create(*logPath)
+		if err != nil {
+			die("%v", err)
+		}
+		defer lf.Close()
+		up.Log = func(f string, a ...any) {
+			fmt.Fprintf(lf, "%s %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(f, a...))
+		}
+	}
 	find := func() *updater.Dev {
 		d := up.Find(nil)
 		if d == nil {

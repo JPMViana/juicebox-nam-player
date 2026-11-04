@@ -266,8 +266,10 @@ func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Du
 		}
 		fl, addr, n, ok := parseRequest(p)
 		if !ok {
+			u.logf("serve: not a request: % x", p[:min(len(p), 24)])
 			continue
 		}
+		u.logf("serve: req fl=%d addr=%#x n=%d (pkt %d B)", fl, addr, n, len(p))
 		last = time.Now()
 		if addr == finishCheck || addr == finishWrite {
 			l.Send(response(addr, []byte("success\x00"), 0))
