@@ -61,6 +61,9 @@ You only need to do this once.
    time can open a MIDI device.
 3. Open Juice-Box. The first time, it asks for the language (English or Português). You can change it later at the
    top right.
+
+<p align="center"><img src="images/installer-connect.png" alt="The app waiting for the pedal" width="640"></p>
+
 4. The app shows **"BlackBox with the official firmware"**. Click **Install Juice-Box**, read the warning and confirm.
 5. Wait about a minute. The pedal restarts a few times. **Do not unplug it or close the window while it writes.**
    - The progress bar can **stay at 99 % for a while**. That is a known bug. Give it a couple of minutes. If the
@@ -87,8 +90,13 @@ Which ones to choose:
 In the app:
 - **Captures** tab → **Add captures…**: pick up to 8 `.nam` files. Writing restarts the pedal (about 2 s).
   Volume is normalized like in the NAM plugin.
+
+<p align="center"><img src="images/installer-captures.png" alt="Captures tab" width="640"></p>
+
 - **Banks** tab: each bank button on the pedal (**FX, AMP, MOD, DLY, REV, CAB**) holds two captures, **A** and **B**,
   with their own **IN** (input) and **OUT** (output) levels. Click **Save to pedal**.
+
+<p align="center"><img src="images/installer-banks.png" alt="Banks tab" width="640"></p>
 
 ## 5. Using the pedal
 
@@ -107,6 +115,8 @@ In the app:
 
 In the app: **Firmware** tab → **Restore official firmware…**. The app downloads the official M-VAVE V20 firmware,
 checks it, erases Juice-Box's captures and installs V20. After that the pedal works with the M-VAVE editor again.
+
+<p align="center"><img src="images/installer-firmware.png" alt="Firmware tab" width="640"></p>
 
 ## Troubleshooting
 

@@ -61,6 +61,9 @@ Isso só é necessário uma vez.
    pode abrir um aparelho MIDI.
 3. Abra o Juice-Box. Na primeira vez ele pergunta o idioma (English ou Português). Dá para trocar depois, no canto
    superior direito.
+
+<p align="center"><img src="images/installer-connect.png" alt="O app esperando o pedal" width="640"></p>
+
 4. O app mostra **"BlackBox com o firmware oficial"**. Clique em **Instalar Juice-Box**, leia o aviso e confirme.
 5. Espere cerca de um minuto. O pedal reinicia algumas vezes. **Não desconecte o pedal nem feche a janela durante a
    gravação.**
@@ -87,8 +90,13 @@ Quais escolher:
 No app:
 - Aba **Capturas** → **Adicionar capturas…**: escolha até 8 arquivos `.nam`. Gravar reinicia o pedal (cerca de 2 s).
   O volume é normalizado como no plugin do NAM.
+
+<p align="center"><img src="images/installer-captures.png" alt="Aba Capturas" width="640"></p>
+
 - Aba **Bancos**: cada botão de banco do pedal (**FX, AMP, MOD, DLY, REV, CAB**) guarda duas capturas, **A** e **B**,
   com níveis próprios de **IN** (entrada) e **OUT** (saída). Clique em **Salvar no pedal**.
+
+<p align="center"><img src="images/installer-banks.png" alt="Aba Bancos" width="640"></p>
 
 ## 5. Usando o pedal
 
@@ -107,6 +115,8 @@ No app:
 
 No app: aba **Firmware** → **Restaurar firmware oficial…**. O app baixa o firmware oficial V20 da M-VAVE, confere,
 apaga as capturas do Juice-Box e instala o V20. Depois disso o pedal volta a funcionar com o editor da M-VAVE.
+
+<p align="center"><img src="images/installer-firmware.png" alt="Aba Firmware" width="640"></p>
 
 ## Problemas comuns
 

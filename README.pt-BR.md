@@ -18,6 +18,8 @@ ou interface com capturas que incluem a caixa.
 - **Interface própria na tela**, em inglês ou português.
 - **Sempre reversível**: um clique no app devolve o firmware oficial da M-VAVE.
 
+<p align="center"><img src="docs/images/installer-captures.png" alt="O app Juice-Box: capturas no pedal" width="720"></p>
+
 > **Estado: v0.17, primeiro teste público.** Funciona no pedal do autor (macOS). O teste no Windows está começando.
 > Leia o [guia do usuário](docs/user-guide.pt-BR.md) antes de instalar e
 > [conte o que encontrar](../../issues/new/choose) (pode ser em português).
@@ -33,6 +35,12 @@ ou interface com capturas que incluem a caixa.
 
 Você precisa de capturas NAM **A2** (por exemplo, do [TONE3000](https://www.tone3000.com), filtrando pela
 arquitetura A2). Capturas A1, as mais antigas, não rodam neste chip.
+
+<p align="center">
+  <img src="docs/images/installer-connect.png" alt="Conecte o pedal" width="32%">
+  <img src="docs/images/installer-banks.png" alt="Bancos A/B com níveis IN/OUT" width="32%">
+  <img src="docs/images/installer-firmware.png" alt="Reinstalar ou restaurar o firmware oficial" width="32%">
+</p>
 
 ## Para desenvolvedores
 
