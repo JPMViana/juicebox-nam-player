@@ -1,0 +1,128 @@
+# Builds the Juice-Box installer for macOS and Windows and attaches it to a draft GitHub release.
+#
+# Trigger: push a tag vX.Y.Z whose installer/assets/release/ holds the matching firmware release
+# (fw/build.py --release, then installer/scripts/build.sh or scripts/release.sh copies it there).
+# The firmware itself is built locally: it needs the JieLi toolchain and the stock V20 package.
+# The release stays a draft until it is published by hand on GitHub.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: firmware release matches the tag
+        run: |
+          set -e
+          man=$(ls installer/assets/release/juicebox-*.json)
+          [ "$(echo "$man" | wc -l)" -eq 1 ] || { echo "expected one manifest, got: $man"; exit 1; }
+          ver=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$man")
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "$ver" ]; then
+            echo "tag ${GITHUB_REF_NAME} but the installer carries $ver"; exit 1
+          fi
+
+  macos:
+    needs: check
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CGO_CFLAGS: -mmacosx-version-min=11.0
+      CGO_LDFLAGS: -mmacosx-version-min=11.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: installer/go.mod
+          cache-dependency-path: installer/go.sum
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+      - name: test
+        working-directory: installer
+        run: go test ./...
+      - name: build app (universal)
+        working-directory: installer
+        run: wails build -clean -platform darwin/universal -trimpath
+      - name: build jbx (universal)
+        working-directory: installer
+        run: |
+          GOARCH=arm64 CGO_ENABLED=1 go build -trimpath -o jbx-arm64 ./cmd/jbx
+          GOARCH=amd64 CGO_ENABLED=1 go build -trimpath -o jbx-amd64 ./cmd/jbx
+          lipo -create -output jbx jbx-arm64 jbx-amd64
+      - name: package
+        run: |
+          set -e
+          v=${{ needs.check.outputs.version }}
+          mkdir out
+          codesign --force --deep -s - installer/build/bin/Juice-Box.app   # ad-hoc: no paid certificate
+          ditto -c -k --keepParent installer/build/bin/Juice-Box.app "out/Juice-Box-$v-macOS.zip"
+          (cd installer && zip -9 "../out/jbx-$v-macOS.zip" jbx)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/*
+
+  windows:
+    needs: check
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: installer/go.mod
+          cache-dependency-path: installer/go.sum
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+      - name: test
+        working-directory: installer
+        run: go test ./...
+      - name: build app
+        working-directory: installer
+        run: wails build -clean -platform windows/amd64 -trimpath
+      - name: build jbx
+        working-directory: installer
+        run: CGO_ENABLED=1 go build -trimpath -o jbx.exe ./cmd/jbx
+      - name: package
+        run: |
+          set -e
+          v=${{ needs.check.outputs.version }}
+          mkdir out
+          cp installer/build/bin/Juice-Box.exe "out/Juice-Box-$v-Windows.exe"
+          (cd installer && 7z a -tzip "../out/jbx-$v-Windows.zip" jbx.exe)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+
+  publish:
+    needs: [check, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: checksums
+        working-directory: out
+        run: sha256sum * | tee SHA256SUMS.txt
+      - name: draft release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Juice-Box ${{ needs.check.outputs.version }}
+          body_path: .github/release-notes.md
+          files: out/*

@@ -1,0 +1,21 @@
+# Installer unit tests on every push and pull request (the firmware needs the JieLi toolchain and is built locally).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  installer:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: installer/go.mod
+          cache-dependency-path: installer/go.sum
+      - working-directory: installer
+        run: |
+          go vet ./internal/... ./cmd/...
+          go test ./...

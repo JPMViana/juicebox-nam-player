@@ -1,0 +1,17 @@
+{
+ "format": 1,
+ "firmware": "Juice-Box",
+ "version": "v0.17.0",
+ "product": "BlackBox_980",
+ "app": "juicebox-v0.17.0-app.bin",
+ "app_sha256": "ec9de3c944833c93357a7f8c3812cfff98a9c9f63a4dfaed1d8fc7c44da2179a",
+ "app_used": 257076,
+ "stock_sha256": "c0fef191b860d3b20f77fc492a24986eef2d12df44bb5e38355684820e26cb08",
+ "loader": {
+  "offset": 163571,
+  "length": 19937,
+  "crc16": 22657,
+  "source": "ota.bin",
+  "source_offset": 32
+ }
+}

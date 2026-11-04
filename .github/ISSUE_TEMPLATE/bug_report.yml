@@ -1,0 +1,48 @@
+name: Bug report / Relatar problema
+description: Something went wrong while installing or using Juice-Box. English or Portuguese is fine.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! / Obrigado por testar!
+        If the pedal is in **update mode**, it is safe: open the app and use **Finish installation**.
+        Se o pedal está em **modo de atualização**, ele está seguro: abra o app e use **Terminar instalação**.
+  - type: dropdown
+    id: os
+    attributes:
+      label: System / Sistema
+      options: [macOS (Apple Silicon), macOS (Intel), Windows 11, Windows 10, Other / Outro]
+    validations:
+      required: true
+  - type: input
+    id: osver
+    attributes:
+      label: OS version / Versão do sistema
+      placeholder: macOS 15.1, Windows 11 24H2…
+  - type: input
+    id: appver
+    attributes:
+      label: Juice-Box app version / Versão do app
+      placeholder: v0.17.0
+    validations:
+      required: true
+  - type: input
+    id: identity
+    attributes:
+      label: Pedal identity shown by the app / Identidade do pedal mostrada no app
+      placeholder: BlackBox_020, BlackBox_980, ota-?…
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / O que aconteceu?
+      description: What you did, what you expected, what the app and the pedal's screen showed.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Installer log / Log do instalador
+      description: |
+        Drag the file here. / Arraste o arquivo aqui.
+        macOS: `~/Library/Caches/Juice-Box/installer.log` · Windows: `%LOCALAPPDATA%\Juice-Box\installer.log`

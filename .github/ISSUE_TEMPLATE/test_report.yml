@@ -1,0 +1,32 @@
+name: Test report (it works!) / Relato de teste (funcionou!)
+description: Tell us Juice-Box worked on your pedal and computer.
+labels: [test-report]
+body:
+  - type: dropdown
+    id: os
+    attributes:
+      label: System / Sistema
+      options: [macOS (Apple Silicon), macOS (Intel), Windows 11, Windows 10, Other / Outro]
+    validations:
+      required: true
+  - type: input
+    id: appver
+    attributes:
+      label: Juice-Box app version / Versão do app
+      placeholder: v0.17.0
+    validations:
+      required: true
+  - type: checkboxes
+    id: tested
+    attributes:
+      label: What did you test? / O que você testou?
+      options:
+        - label: Install from the official firmware / Instalar a partir do firmware oficial
+        - label: Add captures / Adicionar capturas
+        - label: Banks and footswitches / Bancos e footswitches
+        - label: Restore the official firmware / Restaurar o firmware oficial
+        - label: PHONES output / Saída PHONES
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes (sound, captures used, anything odd) / Observações
