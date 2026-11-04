@@ -4,6 +4,59 @@ Nome: **Juice-Box**, por **João Viana** (até a v0.1.2: armaria-nam). Identidad
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
+## v0.14.0 – v0.14.2 (2026-11-03) — capturas pelo USB, sem recompilar
+
+O pedal guarda **8 capturas** na flash e toca a escolhida no boot. A captura embutida no build
+(`fw/build.py --model`) continua como reserva (slot "0"). Cliente: `tools/jb_models.py`. Ele é a referência
+para o instalador.
+
+```bash
+.venv/bin/python -I tools/jb_models.py list
+.venv/bin/python -I tools/jb_models.py put "minha.nam" 1 --select     # grava no slot 1 e toca
+.venv/bin/python -I tools/jb_models.py select 2                       # 0 = captura interna
+.venv/bin/python -I tools/jb_models.py wipe                           # apaga tudo (antes de voltar ao V20)
+```
+
+| Versão | Pacote | O que mudou | Medido |
+|---|---|---|---|
+| v0.14.0 | `_975` | Armazenamento de capturas + comandos SysEx `d e w c s x r` (minúsculos). `nam2c.py --slot` gera a imagem do slot e recusa pesos fora do ponto fixo do núcleo 1 | gravar um slot: **0,5 s**; ao retomar, o **núcleo 1 religado faz o pedal cair** (erro de limite de escrita dentro de `fm1_cpu1_start`, `DBG_MSG 0x800`) |
+| v0.14.1 | `_976` | Retomar = **reiniciar** o pedal (o boot carrega a captura salva). Antes do reinício proposital o `bootguard` é zerado, senão duas trocas rápidas levariam ao resgate | `select` → reinício → captura certa; capturas mantidas após atualizar o firmware |
+| v0.14.2 | `_977` | Correção: o limite de 20 s sem comandos comparava `now` (do topo do laço, mais antigo) com `ms_last_ms` sem sinal → reinício logo após o 1º comando (laço de reinícios durante o teste). Cliente reenvia um `w` sem resposta (até 3×; regravar os mesmos bytes não altera a flash) | 4 trocas seguidas < 10 s após o boot, 3 gravações seguidas, gravação abandonada → reinício em 20 s: tudo ok, sem registros de falha |
+
+### Mapa e formato
+
+| Região | Uso |
+|---|---|
+| `0xA9000–0xB9000` | 8 slots × 8 KB (início livre da VM) |
+| `0xBF000` | configuração: slot ativo (registros de 16 B, só acrescenta; apaga o setor quando enche) |
+| `0xC3000–` (`USR`) | **não usado**: é o sistema de arquivos do firmware oficial (AMP/CAB do usuário), preservado para a volta ao V20 |
+
+Slot = cabeçalho de 64 B (`"JBM1"`, versão 1, 1871 pesos, CRC-32 dos pesos, taxa, ganho de loudness, título de 24 B,
+CRC-32 do cabeçalho) + pesos float32 LE na ordem do `.nam`. O host grava os pesos e **o cabeçalho por último**; `c`
+confere os dois CRCs. Um slot incompleto aparece vazio.
+
+### Protocolo (SysEx `F0 7D 'J' 'B' cmd … F7`, respostas `… cmd slot rc`, rc 0 = ok)
+
+| Cmd | Argumentos | Efeito |
+|---|---|---|
+| `d` | — | por slot `d slot válido pack7(cabeçalho)`, depois `d 7F ativo versão_protocolo` |
+| `e` | slot | pausa o NAM e apaga o slot |
+| `w` | slot, deslocamento (3 × 7 bits), pack7(≤ 256 B) | grava; só em slot apagado nesta sessão |
+| `c` | slot | confere cabeçalho e CRC → slot válido |
+| `s` | slot (7F = interna) | salva como captura do boot e **reinicia** |
+| `x` | — | apaga todos os slots e a configuração |
+| `r` | — | reinicia (volta a tocar) |
+
+Códigos de erro: 1 pedido inválido, 2 leitura, 3 CRC, 4 modelo, 5 apagar, 6 gravar, 7 cabeçalho.
+Pausado e sem comandos por 20 s, o pedal reinicia sozinho. A troca de captura leva ~5 s (o boot ainda tem 3,5 s de
+tela de abertura/diagnóstico: encurtar na fase de interface).
+
+### Pendências
+- Religar o núcleo 1 sem reiniciar (permitiria trocar de captura no pedal sem os ~5 s).
+- Escolha de captura pelos botões do pedal (fase de interface).
+- O V20 de fábrica ainda não foi testado com capturas gravadas na VM: o instalador deve rodar `x` antes de voltar
+  ao oficial (deixa a região apagada, como uma VM nova).
+
 ## v0.13.18 – v0.13.22 (2026-10-23) — som utilizável: caminho de áudio corrigido, captura do usuário embutida
 
 Primeiro teste com guitarra (v0.13.17, `BlackBox_965`): volume baixo, som picotado e chiado digital. Eram três

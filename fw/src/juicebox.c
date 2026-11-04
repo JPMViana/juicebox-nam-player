@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.13.22"
+#define JB_VERSION "v0.14.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_974"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_977"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,13 +43,20 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_974"
+#define OTA_LOADER_ID "ota-BlackBox_977"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
 #include "fm1_sys.h"
 #define JB_LOG 0x000B9000u                       /* boot log sector, just below the staged loader */
-#define FL_RANGE_OK(off, n) FL_IN(off, n, JB_LOG, OTA_AREA + OTA_AREA_LEN)
+/* v0.14: the capture store (8 slots of 8 KB) in the VM's free start, and the settings sector above the staged
+ * loader. Not in USR (0xC3000): that is the stock firmware's file system (its users' AMP/CAB files), kept for a
+ * return to the stock firmware. The stock firmware already lived with our data in the VM (the loader, 0xBA000). */
+#define MS_BASE 0x000A9000u
+#define MS_SLOTS 8u
+#define MS_SLOT_LEN 0x2000u
+#define MS_SET 0x000BF000u                       /* settings: the active slot (append-only records) */
+#define FL_RANGE_OK(off, n) FL_IN(off, n, MS_BASE, 0x000C2000u)   /* the VM region only (BTIF at 0xC2000) */
 #include "fm1_flash.h"
 #include "fm1_irq.h"                     /* exception vectors + crash record (Felucca) */
 #define C1_MAIN_SECTION ".text.c1main"
@@ -607,7 +614,8 @@ static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MA
 /* v0.13.22: the model's loudness normalized to -18 dB as the NAM plugin does (tools/nam2c.py, per model), then
  * +8 dB (at MASTER full the A2 example peaked at ~0.5 of full scale: too quiet); a soft limiter above 0.7 */
 #define NAM_OUT_BOOST 2.5f
-#define NAM_OUT_TRIM (MODEL_A2LITE_NORM * NAM_OUT_BOOST)
+static float nam_trim = MODEL_A2LITE_NORM * NAM_OUT_BOOST;   /* v0.14: per capture */
+#define NAM_OUT_TRIM nam_trim
 #define LIM_T (0.7f * 8388607.0f)
 #define LIM_R (8388607.0f - LIM_T)
 static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
@@ -630,6 +638,7 @@ static struct a2l nam __attribute__((section(".c1_bss.nam")));   /* v0.12.4: wha
 static struct a2lq namq __attribute__((section(".c1_bss.nam")));  /* v0.13: the back half, fixed point (core 1) */
 static a2l_t nam_ring[A2L_RING_FRAMES * A2L_C] __attribute__((section(".pool")));
 static volatile uint8_t nam_ok, nam_on, c1_ok;
+static char nam_label[32] = "NAM: " MODEL_A2LITE_TITLE;   /* v0.14: the screen line of the running capture */
 static uint32_t nam_us, nam_us_max;
 /* Two-core pipeline: core 0 runs a2l_front on block n while core 1 runs a2l_back on block n - 1 (one
  * block of extra latency, 2.9 ms). Slot n & 1 holds block n's input and the front's lin / hsum. */
@@ -1489,8 +1498,300 @@ static void nam_start(void)
     pipe_primed = 0;
     nam_on = nam_ok && c1_ok;
     text_at(8, 4, "                             ", C_HOT, C_BG);
-    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : "NAM: " MODEL_A2LITE_TITLE,
+    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : nam_label,
             nam_on ? C_HOT : C_ERR, C_BG);
+}
+
+/* --------------------------------------------------------- capture store --- */
+/* v0.14: captures in flash, written over USB (tools/jb_models.py; later the installer), no rebuild. A slot is a
+ * 64-byte header, then the A2-Lite weights as little-endian float32 in .nam order (tools/nam2c.py --slot). The host
+ * writes the weights first and the header last, so a slot reads valid only once complete; "commit" checks both
+ * CRCs. MODEL_A2LITE (built in) stays as the fallback. Flash work needs core 1 held (its code runs from XIP and the
+ * flash is off during a write): the NAM pauses (no audio) for store commands. Core 1 started a second time faults
+ * (v0.14.0 on the pedal: write-limit error inside fm1_cpu1_start, DBG_MSG 0x800), so the way back is a reboot, which
+ * loads the saved capture: on select / resume, or on its own MS_IDLE_MS after the last command.
+ *
+ * SysEx (host -> pedal), replies F0 7D 'J' 'B' cmd ... F7, rc 0 = ok, else the error code:
+ *   d               directory: per slot  d slot valid pack7(header 64 B), then  d 7F active MS_PROTO
+ *   e slot          erase the slot (pauses the NAM)                   -> e slot rc
+ *   w slot o3 data  program pack7(data <= 256 B) at slot + o (o: 3 x 7 bits, LSB first), erased slots only
+ *                                                                     -> w slot rc
+ *   c slot          check the header and the weights' CRC: the slot becomes valid     -> c slot rc
+ *   s slot          save the slot (7F = built in) as the boot capture, then reboot   -> s slot rc
+ *   x               wipe the store and the settings (before a return to the stock firmware)  -> x 0 rc
+ *   r               reboot (back to playing after put / wipe)                        -> r 0 0 */
+#define MS_MAGIC 0x314D424Au                     /* "JBM1" */
+#define MS_PROTO 1u
+#define MS_HDR 64u
+#define MS_DATA (A2L_NWEIGHTS * 4u)
+#define MS_SET_MAGIC 0x5453424Au                 /* "JBST" */
+#define MS_BUILTIN 0x7Fu                         /* the built-in capture's "slot" */
+#define MS_IDLE_MS 20000u
+struct ms_hdr {
+    uint32_t magic;
+    uint16_t hlen, ver;                          /* 64, 1 */
+    uint32_t nw, dcrc, rate;                     /* A2L_NWEIGHTS, CRC-32 of the weights, sample rate */
+    float norm;                                  /* linear loudness trim to -18 dB (nam2c.py) */
+    char title[24];                              /* ASCII, 0-padded */
+    uint32_t rsvd[3];
+    uint32_t hcrc;                               /* CRC-32 of the 60 bytes above */
+};
+typedef char ms_hdr_size_check[sizeof(struct ms_hdr) == MS_HDR ? 1 : -1];
+static struct ms_hdr ms_dir[MS_SLOTS];           /* the headers as read (boot, commit) */
+static uint8_t ms_valid, ms_erased;              /* masks: a valid capture; erased in this session (writable) */
+static uint8_t ms_active = MS_BUILTIN;           /* the capture running */
+static uint8_t ms_paused;                        /* the NAM is stopped for flash work */
+static uint32_t ms_last_ms;
+static uint8_t ms_buf[260] __attribute__((aligned(4)));
+
+static uint32_t crc32_upd(uint32_t c, const uint8_t *p, uint32_t n)   /* zlib's CRC-32 */
+{
+    uint32_t k;
+    c = ~c;
+    while (n--) {
+        c ^= *p++;
+        for (k = 0; k < 8u; k++)
+            c = c & 1u ? (c >> 1) ^ 0xEDB88320u : c >> 1;
+    }
+    return ~c;
+}
+
+static int ms_hdr_ok(const struct ms_hdr *h)
+{
+    return h->magic == MS_MAGIC && h->hlen == MS_HDR && h->ver == 1u && h->nw == A2L_NWEIGHTS &&
+           h->hcrc == crc32_upd(0, (const uint8_t *)h, MS_HDR - 4u) && h->norm > 0.0f && h->norm < 1000.0f;
+}
+
+static void ms_scan(void)
+{
+    uint32_t i;
+    ms_valid = 0;
+    for (i = 0; i < MS_SLOTS; i++)
+        if (fl_read(MS_BASE + i * MS_SLOT_LEN, &ms_dir[i], MS_HDR) == 0 && ms_hdr_ok(&ms_dir[i]))
+            ms_valid |= (uint8_t)(1u << i);
+}
+
+static int ms_read_data(uint32_t slot, uint8_t *w)   /* the weights into w (MS_DATA bytes), CRC checked */
+{
+    uint32_t off = MS_BASE + slot * MS_SLOT_LEN + MS_HDR, i, n;
+    for (i = 0; i < MS_DATA; i += n) {
+        n = MS_DATA - i > 1024u ? 1024u : MS_DATA - i;
+        if (fl_read(off + i, w + i, n))
+            return 2;
+        poll();
+    }
+    return crc32_upd(0, w, MS_DATA) == ms_dir[slot].dcrc ? 0 : 3;
+}
+
+/* load a capture into the NAM (stopped: boot, or paused): 0 = ok; on an error the running one stays */
+static int ms_use(uint32_t slot)
+{
+    const float *w = MODEL_A2LITE;
+    float norm = MODEL_A2LITE_NORM;
+    const char *t = MODEL_A2LITE_TITLE, *pre = "NAM: ";
+    char *d = nam_label;
+    uint32_t i;
+    if (slot < MS_SLOTS) {
+        if (!(ms_valid >> slot & 1u))
+            return 1;
+        cap_state = 0;                           /* the JBW capture buffer is the scratch */
+        i = (uint32_t)ms_read_data(slot, (uint8_t *)cap_in);
+        if (i)
+            return (int)i;
+        w = (const float *)cap_in;
+        norm = ms_dir[slot].norm;
+        t = ms_dir[slot].title;
+        pre = "NAM 1: ";
+    } else
+        slot = MS_BUILTIN;
+    nam_ok = a2l_load(&nam, w, A2L_NWEIGHTS, nam_ring) == 0;
+    if (nam_ok) {                                /* v0.13: the back half in fixed point, prewarmed again through it */
+        a2lx_load(&namq, &nam);
+        a2lx_reset(&nam, &namq);
+    }
+    nam_trim = norm * NAM_OUT_BOOST;
+    ms_active = (uint8_t)slot;
+    while (*pre)
+        *d++ = *pre++;
+    if (slot < MS_SLOTS)
+        nam_label[4] = (char)('1' + slot);
+    for (i = 0; i < 22u && t[i]; i++)            /* 29 columns on the line */
+        *d++ = t[i] >= 32 && t[i] < 127 ? t[i] : '?';
+    *d = 0;
+    return nam_ok ? 0 : 4;
+}
+
+static uint32_t ms_set_read(void)                /* the saved boot capture; MS_BUILTIN if none */
+{
+    uint32_t off, r[4], v = MS_BUILTIN;
+    for (off = 0; off < 0x1000u; off += 16u) {
+        if (fl_read(MS_SET + off, r, 16) || r[0] != MS_SET_MAGIC || r[2] != ~r[1])
+            break;
+        v = r[1];
+    }
+    return v;
+}
+
+static int ms_set_write(uint32_t slot)           /* one 16-byte record after the last; erase when full or foreign */
+{
+    uint32_t off, r[4];
+    for (off = 0; off < 0x1000u; off += 16u) {
+        if (fl_read(MS_SET + off, r, 16))
+            return 2;
+        if ((r[0] & r[1] & r[2] & r[3]) == 0xFFFFFFFFu)
+            break;
+        if (r[0] != MS_SET_MAGIC) {
+            off = 0x1000u;
+            break;
+        }
+    }
+    if (off >= 0x1000u) {
+        if (fl_erase_sector(MS_SET))
+            return 5;
+        off = 0;
+    }
+    r[0] = MS_SET_MAGIC;
+    r[1] = slot;
+    r[2] = ~slot;
+    r[3] = 0;
+    return fl_prog(MS_SET + off, (const uint8_t *)r, 16) ? 6 : 0;
+}
+
+static void ms_pause(void)                       /* NAM and audio off, core 1 held: flash work is safe */
+{
+    ms_last_ms = now_ms();
+    if (ms_paused)
+        return;
+    audio_stop();
+    if (c1_ok) {                                 /* never held mid-job (as the update entry) */
+        uint32_t w0 = fm1_ticks();
+        while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
+            FM1_C1_SYNC();
+        pipe_busy = 0;
+        fm1_cpu1_hold();
+        c1_ok = 0;
+    }
+    nam_on = 0;
+    ms_paused = 1;
+    text_at(8, 4, "                             ", C_HOT, C_BG);
+    text_at(8, 4, "USB: CAPTURAS...", C_WARN, C_BG);
+}
+
+static void ms_resume(void)                      /* a reboot: core 1 cannot be started twice (see above) */
+{
+    bootguard.pending = 0;                       /* a wanted reboot, not a failed boot (two = the rescue loader) */
+    bootguard.failed = 0;
+    BG_SEAL();
+    text_at(8, 4, "                             ", C_HOT, C_BG);
+    text_at(8, 4, "REINICIANDO...", C_WARN, C_BG);
+    delay_poll(100);                             /* the reply goes out */
+    usb_detach();
+    fm1_delay_ms(30);
+    fm1_reboot();
+}
+
+static void ms_reply(uint8_t cmd, uint32_t a, uint32_t b)
+{
+    uint8_t m[8];
+    m[0] = 0xF0; m[1] = 0x7D; m[2] = 'J'; m[3] = 'B'; m[4] = cmd;
+    m[5] = (uint8_t)(a & 0x7Fu); m[6] = (uint8_t)(b & 0x7Fu); m[7] = 0xF7;
+    ota_wire_send(m, 8);
+}
+
+static void ms_dir_send(void)
+{
+    static uint8_t msg[96];
+    uint32_t i, k;
+    for (i = 0; i < MS_SLOTS; i++) {
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'd';
+        msg[5] = (uint8_t)i;
+        msg[6] = (uint8_t)(ms_valid >> i & 1u);
+        k = 7u + ota_pack7((const uint8_t *)&ms_dir[i], MS_HDR, msg + 7);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    }
+    msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'd';
+    msg[5] = 0x7F; msg[6] = ms_active; msg[7] = MS_PROTO; msg[8] = 0xF7;
+    ota_wire_send(msg, 9);
+}
+
+static int ms_erase_slot(uint32_t slot)
+{
+    uint32_t i;
+    ms_valid &= (uint8_t)~(1u << slot);
+    for (i = 0; i < MS_SLOT_LEN; i += 0x1000u) {
+        if (fl_erase_sector(MS_BASE + slot * MS_SLOT_LEN + i))
+            return 5;
+        poll();
+    }
+    ms_erased |= (uint8_t)(1u << slot);
+    return 0;
+}
+
+/* a store command (p: the frame without F0 / F7, p[3] the command); 1 = it was one */
+static int ms_service(const uint8_t *p, uint32_t n)
+{
+    uint32_t slot, rc, i;
+    uint8_t cmd;
+    if (n < 4u || p[0] != 0x7D || p[1] != 'J' || p[2] != 'B')
+        return 0;
+    cmd = p[3];
+    slot = n > 4u ? p[4] : 0u;
+    if (cmd == 'd' && n == 4u) {
+        ota_frame_done();
+        ms_dir_send();
+    } else if (cmd == 'e' && n == 5u) {
+        ota_frame_done();
+        ms_pause();
+        rc = slot < MS_SLOTS && flash_ok ? (uint32_t)ms_erase_slot(slot) : 1u;
+        ms_reply('e', slot, rc);
+    } else if (cmd == 'w' && n >= 9u) {
+        uint32_t off = (uint32_t)p[5] | (uint32_t)p[6] << 7 | (uint32_t)p[7] << 14;
+        uint32_t len = ota_unpack7(p + 8, n - 8u, ms_buf, sizeof ms_buf);
+        ota_frame_done();
+        ms_pause();
+        if (slot >= MS_SLOTS || !(ms_erased >> slot & 1u) || len > 256u || off + len > MS_SLOT_LEN)
+            rc = 1;
+        else
+            rc = fl_prog(MS_BASE + slot * MS_SLOT_LEN + off, ms_buf, len) ? 6u : 0u;
+        ms_reply('w', slot, rc);
+    } else if (cmd == 'c' && n == 5u) {
+        ota_frame_done();
+        ms_pause();
+        rc = 1;
+        if (slot < MS_SLOTS) {
+            rc = fl_read(MS_BASE + slot * MS_SLOT_LEN, &ms_dir[slot], MS_HDR) ? 2u
+               : !ms_hdr_ok(&ms_dir[slot]) ? 7u : (uint32_t)ms_read_data(slot, (uint8_t *)cap_in);
+            if (rc == 0) {
+                ms_valid |= (uint8_t)(1u << slot);
+                ms_erased &= (uint8_t)~(1u << slot);
+            }
+        }
+        ms_reply('c', slot, rc);
+    } else if (cmd == 's' && n == 5u) {
+        ota_frame_done();
+        ms_pause();
+        rc = slot == MS_BUILTIN || (slot < MS_SLOTS && (ms_valid >> slot & 1u)) ? 0u : 1u;
+        if (rc == 0)
+            rc = flash_ok ? (uint32_t)ms_set_write(slot) : 2u;
+        ms_reply('s', slot, rc);
+        ms_resume();
+    } else if (cmd == 'x' && n == 4u) {
+        ota_frame_done();
+        ms_pause();
+        rc = flash_ok ? 0u : 1u;
+        for (i = 0; i < MS_SLOTS && !rc; i++)
+            rc = (uint32_t)ms_erase_slot(i);
+        if (!rc && fl_erase_sector(MS_SET))
+            rc = 5;
+        ms_reply('x', 0, rc);
+    } else if (cmd == 'r' && n == 4u) {
+        ota_frame_done();
+        ms_reply('r', 0, 0);
+        ms_resume();
+    } else
+        return 0;
+    return 1;
 }
 
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
@@ -1498,6 +1799,8 @@ static void debug_service(void)                   /* our SysEx; anything else st
     const uint8_t *p;
     uint32_t n;
     if (!ota_frame_get(&p, &n))
+        return;
+    if (ms_service(p, n))                         /* v0.14: the capture store */
         return;
     if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'L') {
         ota_frame_done();
@@ -2308,11 +2611,14 @@ static void jb_main(void)
     delay_poll(1500);                             /* the splash, a moment */
     test_screen();
     text_at(8, 4, "NAM: carregando...", C_HOT, C_BG);
-    nam_ok = a2l_load(&nam, MODEL_A2LITE, A2L_NWEIGHTS, nam_ring) == 0;   /* (prewarm: ~6300 samples) */
-    if (nam_ok) {                                 /* v0.13: the back half in fixed point, prewarmed again through it */
-        a2lx_load(&namq, &nam);
-        a2lx_reset(&nam, &namq);
-    }
+    if (flash_ok) {                               /* v0.14: the saved capture, else the built-in one (prewarm: ~6300 samples) */
+        uint32_t want;
+        ms_scan();
+        want = ms_set_read();
+        if (want >= MS_SLOTS || ms_use(want))
+            ms_use(MS_BUILTIN);
+    } else
+        ms_use(MS_BUILTIN);
     /* Two cores need a higher core supply on this board: at the default SYSVDD 1.26 V a busy core 1 makes the
      * chip misbehave (v0.10.x: hangs, brown-out-like resets, USB / audio DMA stalls); 1.32 V (SYSVDD_VOL_SEL 13,
      * P3_ANA_CON9 bits 3..0; the SDK's own range goes to 1.38 V) ran every JB5 load clean. */
@@ -2368,6 +2674,11 @@ static void jb_main(void)
             audio_start();
             shown = 0xFFu;
         }
+        if (ms_paused && (int32_t)(now_ms() - ms_last_ms) > (int32_t)MS_IDLE_MS)
+            ms_resume();                          /* the host went away mid-way: reboot, back to playing (v0.14.2: a
+                                                   * fresh clock, signed: `now` from the loop top is older than
+                                                   * ms_last_ms, and unsigned that read as 49 days: a reboot right
+                                                   * after the first store command) */
         if (bootguard.pending && now - t_boot > 30000u) {
             bootguard.pending = 0;                /* 30 s up: a good boot */
             bootguard.failed = 0;
@@ -2463,7 +2774,7 @@ static void jb_main(void)
             if (((din & ~din_old) & (1u << 4)) && nam_ok && c1_ok) {   /* MOD: NAM on / off (A/B) */
                 nam_on ^= 1u;
                 text_at(8, 4, "                             ", C_HOT, C_BG);
-                text_at(8, 4, nam_on ? "NAM: " MODEL_A2LITE_TITLE : "NAM: OFF (direto)", C_HOT, C_BG);
+                text_at(8, 4, nam_on ? nam_label : "NAM: OFF (direto)", C_HOT, C_BG);
             }
             if ((din & ~din_old) & (1u << 2)) {   /* FX pressed: next routing */
                 static const char *const RT[] = {"SAIDA: ESTEREO", "SAIDA: L -> L+R", "SAIDA: R -> L+R"};

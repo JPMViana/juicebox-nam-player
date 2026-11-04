@@ -3,13 +3,17 @@
 
   nam2c.py MODEL.nam --header OUT.h [--name NAME]     C header: weights in .nam stream order
   nam2c.py MODEL.nam --bin OUT.f32                    raw little-endian float32 weights
+  nam2c.py MODEL.nam --slot OUT.jbm [--title T]       a capture-store slot image (fw v0.14: header + weights),
+                                                      for tools/jb_models.py / the installer
 
 A plain WaveNet A2-Lite file is taken as is; from an A2 SlimmableContainer the submodel with
 3 channels (the Lite width) is used. The shape is checked against the A2 signature.
 """
 import argparse
 import json
+import math
 import struct
+import zlib
 from pathlib import Path
 
 KS = [6] * 14 + [15, 15] + [6] * 7
@@ -41,21 +45,55 @@ def check(m):
         raise SystemExit(f"{len(m['weights'])} weights, A2-Lite has 1871")
 
 
+# The back half (layers A2L_SPLIT = 13 .. 22 and the head) runs in fixed point on core 1: weights Q2.29 (|w| < 4),
+# biases Q8.23 (|b| < 256). Its first weight in .nam order: rechannel (3), then 13 layers of kernel 6 (9 k + 18 each).
+BACK_START = 3 + 13 * (9 * 6 + 18)
+SLOT_MAGIC = 0x314D424A                   # "JBM1"
+
+
+def check_fixed(w):
+    big = max(abs(v) for v in w[BACK_START:])
+    if big >= 4.0:
+        raise SystemExit(f"a weight of {big:.3f} in the back half: the pedal's fixed point holds |w| < 4")
+    if not all(math.isfinite(v) for v in w):
+        raise SystemExit("NaN / inf weights")
+
+
+def slot_image(w, rate, norm, title):
+    data = struct.pack(f"<{len(w)}f", *w)
+    t = title.encode("ascii", "replace")[:23].ljust(24, b"\0")
+    h = struct.pack("<IHHIIIf24s12x", SLOT_MAGIC, 64, 1, len(w), zlib.crc32(data), int(rate), norm, t)
+    h += struct.pack("<I", zlib.crc32(h))
+    assert len(h) == 64
+    return h + data
+
+
+def read_model(path, title=None):
+    """(weights, sample rate, loudness trim, screen title, metadata) of an A2 / A2-Lite .nam; SystemExit if unfit"""
+    m = pick_lite(json.loads(Path(path).read_text()))
+    check(m)
+    w = m["weights"]
+    check_fixed(w)
+    meta = m.get("metadata", {}) or {}
+    loud = meta.get("loudness")
+    norm = 10 ** ((-18.0 - float(loud)) / 20.0) if isinstance(loud, (int, float)) else 1.0
+    title = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in (title or Path(path).stem))[:22].upper()
+    return w, m.get("sample_rate", 48000), norm, title, meta
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model", type=Path)
     ap.add_argument("--header", type=Path)
     ap.add_argument("--bin", type=Path)
+    ap.add_argument("--slot", type=Path)
+    ap.add_argument("--title", help="name on the pedal's screen (default: the file name)")
     ap.add_argument("--name", default="NAM_MODEL")
     a = ap.parse_args()
-    m = pick_lite(json.loads(a.model.read_text()))
-    check(m)
-    w = m["weights"]
-    sr = m.get("sample_rate", 48000)
-    meta = m.get("metadata", {}) or {}
+    w, sr, norm, title, meta = read_model(a.model, a.title)
     loud = meta.get("loudness")
-    norm = 10 ** ((-18.0 - float(loud)) / 20.0) if isinstance(loud, (int, float)) else 1.0
-    title = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in a.model.stem)[:22].upper()
+    if a.slot:
+        a.slot.write_bytes(slot_image(w, sr, norm, title))
     if a.bin:
         a.bin.write_bytes(struct.pack(f"<{len(w)}f", *w))
     if a.header:

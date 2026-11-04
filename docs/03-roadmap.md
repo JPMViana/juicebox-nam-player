@@ -59,13 +59,15 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
 ## Fase 5 – Ferramentas para o usuário
 - [x] Conversor `.nam` (A2) → pesos A2-Lite (`tools/nam2c.py`, com normalização de loudness), embutido pelo
   `fw/build.py --model` (v0.13.22)
-- [ ] Cliente de carregamento: upload de capturas `.nam` via USB sem recompilar, escolha de captura no pedal
+- [x] Cliente de carregamento: upload de capturas `.nam` via USB sem recompilar (`tools/jb_models.py`)
+- [ ] Escolha de captura pelos botões do pedal
 - [ ] Modo "power amp": saída sem cab/IR, nível de linha ajustável, noise gate antes do NAM
 
 ## Fase 6 – Distribuição e código aberto (decisão 2026-11-03)
 - [x] Repositório limpo para publicação: objetos do SDK JieLi e WAVs removidos do histórico
   (`git filter-repo`), LICENSE GPL-3.0, README atualizado
-- [ ] Modelos fora do app: pesos na região `USR` + comando USB de carga (pré-requisito do instalador)
+- [x] Capturas fora do app (v0.14.2): 8 slots na VM livre (não na `USR`, que é do firmware oficial) +
+  protocolo USB, cliente `tools/jb_models.py` ([07](07-firmware-armaria.md))
 - [ ] Instalador para usuários não técnicos (Go, Windows e macOS): instalar o Juice-Box, voltar ao
   V20 oficial, carregar capturas `.nam`. O V20 é baixado do fabricante e o pacote é montado na
   máquina do usuário (o `.fwsc` contém partes do fabricante e não é distribuído pronto)

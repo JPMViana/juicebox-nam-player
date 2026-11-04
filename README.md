@@ -7,9 +7,9 @@ em um **player de capturas NAM (Neural Amp Modeler) A2-Lite**, pensado para uso
 direto no retorno de um power amp analógico (simulação de cabeçote, sem cab/IR
 obrigatório).
 
-> **Status (v0.13.22):** o pedal roda uma captura NAM A2-Lite nos dois núcleos, com o
-> áudio estável e som utilizável. A captura ainda é embutida na compilação. Próximos passos:
-> carregar capturas por USB, interface na tela e um instalador para Windows/macOS.
+> **Status (v0.14.2):** o pedal roda capturas NAM A2-Lite nos dois núcleos, com áudio estável e
+> som utilizável, e guarda até 8 capturas enviadas pelo USB, sem recompilar. Próximos passos: interface
+> na tela e um instalador para Windows/macOS.
 > Veja [docs/03-roadmap.md](docs/03-roadmap.md).
 
 > ⚠️ **Projeto em desenvolvimento, ainda sem instalador para o usuário final.** Gravar
@@ -22,8 +22,8 @@ obrigatório).
   quando o boot falha.
 - NAM A2-Lite em tempo real: a primeira metade da rede roda em float no núcleo 0 e a segunda
   em ponto fixo no núcleo 1 (~2700 µs por bloco de 2902 µs).
-- Conversor de capturas `.nam` (A2) → pesos embarcados, com normalização de volume
-  (`tools/nam2c.py`).
+- 8 capturas `.nam` (A2 / A2-Lite) na flash, enviadas pelo USB (`tools/jb_models.py`), com normalização de
+  volume (`tools/nam2c.py`) e escolha da captura do boot.
 - Tela própria, mapeamento completo de botões, knobs e footswitches, e registro de boot na flash.
 
 ## Por que é viável
@@ -46,7 +46,7 @@ Detalhes em [docs/02-viabilidade-nam.md](docs/02-viabilidade-nam.md) e
 docs/        documentação técnica, segurança e roadmap (pt-BR)
 fw/          firmware Juice-Box (fw/build.py); fw/felucca/ = HAL/USB/OTA do Felucca
 nam/         kernel NAM A2-Lite em C (float, ponto fixo, testes no host)
-tools/       bb_install.py (update USB-MIDI), bbpkg.py (.fwsc), nam2c.py, jb_*.py (diagnóstico)
+tools/       bb_install.py (update USB-MIDI), bbpkg.py (.fwsc), jb_models.py (capturas), nam2c.py, jb_*.py (diagnóstico)
 scripts/     setup de referências, desempacotamento do firmware de fábrica, compilador pi32v2
 firmware/    imagens de fábrica (NÃO versionadas – ver firmware/README.md)
 analysis/    notas e logs das sessões no pedal
@@ -68,6 +68,7 @@ python3 -m venv .venv && .venv/bin/pip install mido python-rtmidi
 .venv/bin/python fw/build.py --model minha_captura.nam     # -> build/fw/*.fwsc
 .venv/bin/python tools/bb_install.py --info                # identidade do pedal (só leitura)
 .venv/bin/python tools/bb_install.py build/fw/<pacote>.fwsc --force
+.venv/bin/python -I tools/jb_models.py put minha_captura.nam 1 --select     # captura pelo USB
 .venv/bin/python tools/bb_install.py firmware/stock/BlackBox_FACTORY_V20.fwsc   # voltar ao oficial
 ```
 
