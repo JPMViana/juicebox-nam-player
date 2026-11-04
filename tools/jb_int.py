@@ -14,7 +14,7 @@ while not [g for g in got if g[:5] == b"\xF0\x7DJB8"] and time.time() - t < secs
 inp.close(); out.close()
 g = [g for g in got if g[:5] == b"\xF0\x7DJB8"]
 if not g:
-    raise SystemExit("sem resposta (o pedal pode ter reiniciado)")
+    raise SystemExit("no answer (the pedal may have rebooted)")
 runs, bad, first, ref, fronts, fl = struct.unpack("<6I", unpack7(g[0][5:-1])[:24])
-print(f"{secs} s: núcleo 1 {runs} recursões, {bad} erradas" + (f" (1ª {first:#010x}, certo {ref:#010x})" if bad else "")
-      + f"; núcleo 0 rodou {fronts} fronts do NAM; terminou {bool(fl & 1)}; falha no núcleo 1 {bool(fl & 2)}")
+print(f"{secs} s: core 1 {runs} recursions, {bad} wrong" + (f" (1st {first:#010x}, right {ref:#010x})" if bad else "")
+      + f"; core 0 ran {fronts} NAM fronts; finished {bool(fl & 1)}; core 1 fault {bool(fl & 2)}")

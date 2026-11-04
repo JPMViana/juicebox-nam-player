@@ -23,13 +23,13 @@ def ask(cmd, tag, tries=4, wait=2.0):
 
 if not a.no_enable:
     r = ask(b"N", b"N")
-    print("JBN (c1_ok, nam_on):", struct.unpack("<2I", r[:8]) if r else "sem resposta", flush=True)
+    print("JBN (c1_ok, nam_on):", struct.unpack("<2I", r[:8]) if r else "no answer", flush=True)
 prev = None
 for k in range(a.watch // 5):
     time.sleep(5)
     r = ask(b"S", b"S")
     if not r:
-        print(f"+{5 * (k + 1)}s: sem resposta", flush=True); continue
+        print(f"+{5 * (k + 1)}s: no answer", flush=True); continue
     st = struct.unpack("<8I", r[:32])
     late = f"  saida atrasada {struct.unpack_from('<I', r, 32)[0]}" if len(r) >= 36 else ""
     if len(r) >= 48:
@@ -43,5 +43,5 @@ if g:
     names = {0: "topo/poll", 1: "debug_service", 2: "usb_retry", 3: "ota_service", 4: "status", 5: "texto CPU", 6: "snap/LED",
              7: "medidores", 8: "entradas/ADC", 9: "desenho/envio pots", 10: "ganho/botoes", 20: "usb_poll", 21: "LED PWM"}
     v = struct.unpack("<24H", g[:48])
-    print("maior trecho sem poll por secao (us):", ", ".join(f"{names.get(i, i)} {x}" for i, x in enumerate(v) if x))
+    print("longest stretch without poll per section (us):", ", ".join(f"{names.get(i, i)} {x}" for i, x in enumerate(v) if x))
 inp.close(); out.close()

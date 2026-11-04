@@ -16,25 +16,25 @@ analysis/v20_pkg/
 analysis/disasm/
 analysis/armaria_check/
 
-# binários e objetos do SDK do fabricante (JieLi) — nunca versionar
+# vendor (JieLi) SDK binaries and objects — never commit
 analysis/sdk_cpu/
 analysis/sdk_system/
 *.o
 *.fwsc
 *.ufw
-# capturas de áudio e dumps de RAM gerados pelas ferramentas
+# audio captures and RAM dumps written by the tools
 analysis/logs/measure/
 analysis/logs/*.bin
 *.wav
-# modelos e IRs de terceiros
+# third-party models and IRs
 *.nam
 
-# instruções locais do assistente
+# local assistant instructions
 CLAUDE.md
 
 # installer (Wails): its build/ holds the icons and platform files, kept; the output and generated code are not
 !installer/build/
 installer/build/bin/
 installer/frontend/wailsjs/
-installer/assets/release/*
-!installer/assets/release/.keep
+# installer/assets/release/ is tracked: the firmware release the installer embeds (our code only; the vendor
+# loader region is zeroed and rebuilt on the user's machine from the downloaded V20)

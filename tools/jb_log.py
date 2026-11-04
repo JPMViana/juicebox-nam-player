@@ -67,17 +67,17 @@ def main():
         p3, wdt, failed, pend, resc, warm, vers, _ = r[20:28]
         if magic == 0x46504A42:
             rs = struct.unpack_from('<I', r, 28)[0]
-            print(f"{i:2d}    PROFILER amostra {boots}: núcleo 0 PC {pst:#010x} (estágio {r[20]}), núcleo 1 PC {pms:#010x} | "
-                  f"antes: núcleo 0 {plo:#010x} (estágio {r[21]}), núcleo 1 {rs:#010x}")
+            print(f"{i:2d}    PROFILER sample {boots}: core 0 PC {pst:#010x} (stage {r[20]}), core 1 PC {pms:#010x} | "
+                  f"before: core 0 {plo:#010x} (stage {r[21]}), core 1 {rs:#010x}")
             continue
         if magic == 0x32434A42:
-            print(f"{i:2d}    DBG_MSG {boots:#010x}  erros WR_LIMIT {pst:#08x}  ETM {pms:#010x} {plo:#010x}  "
-                  f"aos {struct.unpack_from('<I', r, 28)[0]} ms")
+            print(f"{i:2d}    DBG_MSG {boots:#010x}  WR_LIMIT errors {pst:#08x}  ETM {pms:#010x} {plo:#010x}  "
+                  f"at {struct.unpack_from('<I', r, 28)[0]} ms")
             continue
         if magic == 0x52434A42:
             vec, core = boots & 0xFFFF, boots >> 16
             emu = struct.unpack_from("<I", r, 28)[0]
-            print(f"{i:2d}  FALHA núcleo {core}: vetor {vec}  PC {pst:#010x}  RETS {pms:#010x}  SP {plo:#010x}  "
+            print(f"{i:2d}  FAULT core {core}: vector {vec}  PC {pst:#010x}  RETS {pms:#010x}  SP {plo:#010x}  "
                   f"EMU {emu:#010x}  DBG {wdt:#04x}  #{p3}")
             continue
         if magic != 0x474C424A:

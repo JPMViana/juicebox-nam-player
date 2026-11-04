@@ -4,7 +4,7 @@ import struct, sys, time
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from bb_install import unpack7
 import mido
-NAMES = ["RAM baixa 0x01C08000 (antiga pilha do núcleo 1)", "RAM .bss", "RAM alta livre 0x01C60000", "RAMTEXT livre 0x01C02000"]
+NAMES = ["low RAM 0x01C08000 (old core 1 stack)", "RAM .bss", "free high RAM 0x01C60000", "free RAMTEXT 0x01C02000"]
 n = [x for x in mido.get_input_names() if "armaria" in x or "Juice" in x][0]
 secs = int(sys.argv[1])
 for r in [int(a) for a in sys.argv[2:]] or range(4):
@@ -16,9 +16,9 @@ for r in [int(a) for a in sys.argv[2:]] or range(4):
     inp.close(); out.close()
     g = [g for g in got if g[:5] == b"\xF0\x7DJB6"]
     if not g:
-        print(f"região {r}: sem resposta"); break
+        print(f"region {r}: no answer"); break
     rounds, bad, a, v, e, fr = struct.unpack("<6I", unpack7(g[0][5:-1])[:24])
     reads = rounds * 1024
-    extra = f"  1ª: [{a:#010x}] = {v:#010x} (esperado {e:#010x}, xor {v ^ e:#010x})" if bad else ""
-    print(f"região {r} {NAMES[r]}, {secs} s: {reads} leituras, {bad} erradas ({bad / max(reads, 1):.2e}), núcleo 0 rodou {fr} fronts{extra}", flush=True)
+    extra = f"  1st: [{a:#010x}] = {v:#010x} (expected {e:#010x}, xor {v ^ e:#010x})" if bad else ""
+    print(f"region {r} {NAMES[r]}, {secs} s: {reads} reads, {bad} wrong ({bad / max(reads, 1):.2e}), core 0 ran {fr} fronts{extra}", flush=True)
     time.sleep(0.5)

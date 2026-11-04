@@ -4,7 +4,7 @@ import struct, sys, time
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from bb_install import unpack7
 import mido
-NAMES = {0: "núcleo 0 no front em float", 1: "núcleo 0 em inteiros", 2: "núcleo 0 só no laço de serviço"}
+NAMES = {0: "core 0 on the float front", 1: "core 0 on integers", 2: "core 0 only in the service loop"}
 m, secs = int(sys.argv[1]), int(sys.argv[2]) if len(sys.argv) > 2 else 20
 n = [x for x in mido.get_input_names() if "armaria" in x or "Juice" in x][0]
 got = []
@@ -15,7 +15,7 @@ while not [g for g in got if g[:5] == b"\xF0\x7DJB9"] and time.time() - t < secs
 inp.close(); out.close()
 g = [g for g in got if g[:5] == b"\xF0\x7DJB9"]
 if not g:
-    raise SystemExit(f"modo {m} ({NAMES[m]}): sem resposta (travou?)")
+    raise SystemExit(f"mode {m} ({NAMES[m]}): no answer (hung?)")
 r1, r0, done = struct.unpack("<3I", unpack7(g[0][5:-1])[:12])
-print(f"modo {m} ({NAMES[m]}), {secs} s: núcleo 1 {r1} blocos do back ({r1 / secs:.0f}/s, {1e6 * secs / max(r1, 1):.0f} us cada); "
-      f"núcleo 0 {r0} rodadas; terminou {bool(done)}")
+print(f"mode {m} ({NAMES[m]}), {secs} s: core 1 {r1} back blocks ({r1 / secs:.0f}/s, {1e6 * secs / max(r1, 1):.0f} us each); "
+      f"core 0 {r0} runs; finished {bool(done)}")

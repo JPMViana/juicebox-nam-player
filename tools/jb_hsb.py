@@ -14,6 +14,6 @@ while not [g for g in got if g[:5] == b"\xF0\x7DJBH"] and time.time() - t < 5:
 inp.close(); out.close()
 g = [g for g in got if g[:5] == b"\xF0\x7DJBH"]
 if not g:
-    raise SystemExit("sem resposta")
+    raise SystemExit("no answer")
 a, b, ticks = struct.unpack("<3I", unpack7(g[0][5:-1])[:12])
 print(f"SYS_DIV {a:#010x} -> {b:#010x}; clk_loop(200000) = {ticks} ticks de 24 MHz ({ticks / 24:.0f} us)")

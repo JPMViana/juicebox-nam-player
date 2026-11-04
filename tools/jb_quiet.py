@@ -16,5 +16,5 @@ for _ in range(4):
     if r:
         print("modo", r[0][5]); break
 else:
-    print("sem resposta")
+    print("no answer")
 inp.close(); out.close()

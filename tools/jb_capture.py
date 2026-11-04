@@ -28,7 +28,7 @@ def ask_w(arm):
             if r:
                 return struct.unpack("<6I", unpack7(r[0][5:-1])[:24])
             time.sleep(0.02)
-    raise SystemExit("sem resposta ao JBW (firmware >= BlackBox_970?)")
+    raise SystemExit("no answer to JBW (firmware >= BlackBox_970?)")
 
 def enc(v): return bytes((v >> (7 * i)) & 0x7F for i in range(5))
 
@@ -81,7 +81,7 @@ for k in range(1, cap):
     h = mix[128 * (k - 1):128 * k]
     ip = max(abs(x) for x in fin[128 * (k - 1):128 * k])
     if any(x != x for x in d):
-        print(f"{k:5d}  {ip:11.3f}  {max(abs(x) for x in h):9.4f}     (sem saida)")
+        print(f"{k:5d}  {ip:11.3f}  {max(abs(x) for x in h):9.4f}     (no output)")
         bad += 1
         continue
     md = max(abs(x - y) for x, y in zip(d, h))

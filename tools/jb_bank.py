@@ -18,13 +18,13 @@ while not [g for g in got if g[:5] == b"\xF0\x7DJBY"] and time.time() - t < secs
 inp.close(); out.close()
 g = [g for g in got if g[:5] == b"\xF0\x7DJBY"]
 if not g:
-    raise SystemExit(f"núcleo 1 em {x:#010x}, núcleo 0 em {y:#010x} ({abs(x - y) // 1024} KB): sem resposta (travou)")
+    raise SystemExit(f"core 1 at {x:#010x}, core 0 at {y:#010x} ({abs(x - y) // 1024} KB): no answer (hung)")
 d = unpack7(g[0][5:-1])
 r1, b1, r0, b0, done = struct.unpack("<5I", d[:20])
 first = struct.unpack("<6I", d[20:44]) if len(d) >= 44 else None
-print(f"núcleo 1 em {x:#010x}, núcleo 0 em {y:#010x} ({abs(x - y) // 1024} KB), {secs} s: núcleo 1 {r1} voltas de 4 KB, {b1} erradas; "
-      f"núcleo 0 {r0} voltas, {b0} erradas; terminou {bool(done)}")
+print(f"core 1 at {x:#010x}, core 0 at {y:#010x} ({abs(x - y) // 1024} KB), {secs} s: core 1 {r1} passes of 4 KB, {b1} wrong; "
+      f"core 0 {r0} passes, {b0} wrong; finished {bool(done)}")
 if first:
-    for who, (a, v, e) in (("núcleo 1", first[:3]), ("núcleo 0", first[3:])):
+    for who, (a, v, e) in (("core 1", first[:3]), ("core 0", first[3:])):
         if v != e:
-            print(f"  1º erro {who}: [{a:#010x}] = {v:#010x}, esperado {e:#010x} (xor {v ^ e:#010x})")
+            print(f"  first error {who}: [{a:#010x}] = {v:#010x}, expected {e:#010x} (xor {v ^ e:#010x})")

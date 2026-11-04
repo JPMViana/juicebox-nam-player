@@ -19,4 +19,4 @@ else:
     raise SystemExit("no answer")
 v = struct.unpack("<17I", unpack7(r[0][5:-1])[:68])
 names = "magic count vec pc rets emu dbg sp psr icfg uptime_ms etm0 etm1 etm2 etm3 early core".split()
-print(("registro VALIDO" if v[0] == 0x43525348 else "sem falha registrada"), " ".join(f"{k}={x:#x}" for k, x in zip(names, v)))
+print(("VALID record" if v[0] == 0x43525348 else "no fault recorded"), " ".join(f"{k}={x:#x}" for k, x in zip(names, v)))
