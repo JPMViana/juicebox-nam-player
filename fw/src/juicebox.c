@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.14.2"
+#define JB_VERSION "v0.17.0"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -33,7 +33,7 @@
                                           * the BlackBox SPL was never seen to scan */
 #define FELUCCA_USB_PID 0x0001
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "BlackBox_977"        /* handshake identity == package marker (fw/build.py) */
+#define FELUCCA_ID "BlackBox_980"        /* handshake identity == package marker (fw/build.py) */
 #endif
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
@@ -43,7 +43,7 @@
 #define OTA_AREA 0x000BA000u
 #define OTA_AREA_LEN 0x5000u
 #define OTA_FL_LEN 0x000A5000u
-#define OTA_LOADER_ID "ota-BlackBox_977"
+#define OTA_LOADER_ID "ota-BlackBox_980"
 
 #define FM1_CPU1_USED 1                  /* fm1_sys.h: every reset path holds core 1 first */
 #include "fm1_time.h"
@@ -75,7 +75,7 @@ static const uint8_t STR2[] = {20, 3, 'J', 0, 'u', 0, 'i', 0, 'c', 0, 'e', 0, '-
 #include "loader.h"
 #include "a2lite.h"
 #include "a2lx.h"                       /* v0.13: core 1 runs the back half in fixed point */
-#include "model_a2lite.h"
+#include "fonts_aa.h"                    /* v0.15: the UI fonts (fw/tools/gen_assets.py) */
 
 /* A core-0 fault: the record (fm1_crash, .noinit) is logged by the next boot */
 static void fm1_fault(const fm1_crash_t *c)
@@ -495,7 +495,7 @@ static void test_screen(void)
 {
     uint32_t i;
     lcd_fill(0, 0, LCD_W, LCD_H, C_BG);
-    text_at(8, 4, "Juice-Box " JB_VERSION "  ENTRADAS", C_HOT, C_BG);
+    text_at(8, 4, "Juice-Box " JB_VERSION "  INPUTS", C_HOT, C_BG);
     for (i = 0; i < N_DIN; i++)
         text_at(8u + (i % 5u) * 46u, 30u + (i / 5u) * 22u, DIN_NAME[i], C_DIM, C_BG);
     for (i = 0; i < N_AIN; i++)
@@ -611,11 +611,14 @@ static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
 static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
 static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
+static volatile uint8_t au_mute;                  /* v0.15: output silent (a capture is being loaded) */
+static volatile uint8_t au_umute;                 /* v0.16: the player's MUTE (left footswitch held) */
 /* v0.13.22: the model's loudness normalized to -18 dB as the NAM plugin does (tools/nam2c.py, per model), then
  * +8 dB (at MASTER full the A2 example peaked at ~0.5 of full scale: too quiet); a soft limiter above 0.7 */
 #define NAM_OUT_BOOST 2.5f
-static float nam_trim = MODEL_A2LITE_NORM * NAM_OUT_BOOST;   /* v0.14: per capture */
-#define NAM_OUT_TRIM nam_trim
+static float nam_trim = NAM_OUT_BOOST;           /* v0.14: per capture (its loudness trim x the boost) */
+static float nam_in = 1.0f, nam_out = 1.0f;     /* v0.16: the bank's IN / OUT (linear) */
+#define NAM_OUT_TRIM (nam_trim * nam_out)
 #define LIM_T (0.7f * 8388607.0f)
 #define LIM_R (8388607.0f - LIM_T)
 static uint32_t au_peak[2];                       /* [0] |input L| peak, [1] |output| peak, since the last read */
@@ -638,7 +641,6 @@ static struct a2l nam __attribute__((section(".c1_bss.nam")));   /* v0.12.4: wha
 static struct a2lq namq __attribute__((section(".c1_bss.nam")));  /* v0.13: the back half, fixed point (core 1) */
 static a2l_t nam_ring[A2L_RING_FRAMES * A2L_C] __attribute__((section(".pool")));
 static volatile uint8_t nam_ok, nam_on, c1_ok;
-static char nam_label[32] = "NAM: " MODEL_A2LITE_TITLE;   /* v0.14: the screen line of the running capture */
 static uint32_t nam_us, nam_us_max;
 /* Two-core pipeline: core 0 runs a2l_front on block n while core 1 runs a2l_back on block n - 1 (one
  * block of extra latency, 2.9 ms). Slot n & 1 holds block n's input and the front's lin / hsum. */
@@ -1078,7 +1080,7 @@ static void audio_service(void)
     au_h ^= 1u;
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
-    g = au_gain;
+    g = au_mute || au_umute ? 0u : au_gain;
     if (nam_on && nam_ok && c1_ok) {              /* guitar (L) -> A2-Lite (two cores) -> both outputs */
         const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f * NAM_OUT_TRIM;
         const uint32_t slot = pipe_blk & 1u, prev = slot ^ 1u;
@@ -1095,7 +1097,7 @@ static void audio_service(void)
                 au_clip_in++;
                 au_clip_in_ev++;
             }
-            nin[f] = (float)x * (1.0f / 8388608.0f);
+            nin[f] = (float)x * (nam_in * (1.0f / 8388608.0f));
             if (cap_state == 1u && ax > (1u << 20))
                 cap_state = 4;                    /* > -18 dBFS: start here */
         }
@@ -1487,6 +1489,7 @@ static __attribute__((noinline)) uint32_t clk_loop(uint32_t n)
 
 /* v0.13.17: the two-core NAM on (boot and JBN): core supply, core 1's write limits, core 1 started (once), the
  * pipeline on, the screen updated. VDC14 is already 1.50 V (jb_main) */
+static uint8_t ui_bypass;                         /* v0.15: MOD, the NAM bypassed (dry signal) */
 static void nam_start(void)
 {
     fm1_p33_write(0x09, (uint8_t)((fm1_p33_read(0x09) & 0xF0u) | nam_vlevel));
@@ -1496,17 +1499,14 @@ static void nam_start(void)
         c1_ok = fm1_cpu1_start() == 0;
     prof_start();
     pipe_primed = 0;
-    nam_on = nam_ok && c1_ok;
-    text_at(8, 4, "                             ", C_HOT, C_BG);
-    text_at(8, 4, !nam_ok ? "NAM: ERRO NO MODELO" : !c1_ok ? "NAM: 2o NUCLEO FALHOU" : nam_label,
-            nam_on ? C_HOT : C_ERR, C_BG);
+    nam_on = nam_ok && c1_ok && !ui_bypass;
 }
 
 /* --------------------------------------------------------- capture store --- */
 /* v0.14: captures in flash, written over USB (tools/jb_models.py; later the installer), no rebuild. A slot is a
  * 64-byte header, then the A2-Lite weights as little-endian float32 in .nam order (tools/nam2c.py --slot). The host
  * writes the weights first and the header last, so a slot reads valid only once complete; "commit" checks both
- * CRCs. MODEL_A2LITE (built in) stays as the fallback. Flash work needs core 1 held (its code runs from XIP and the
+ * CRCs. v0.15: no built-in capture (none stored: the dry signal). Flash work needs core 1 held (its code runs from XIP and the
  * flash is off during a write): the NAM pauses (no audio) for store commands. Core 1 started a second time faults
  * (v0.14.0 on the pedal: write-limit error inside fm1_cpu1_start, DBG_MSG 0x800), so the way back is a reboot, which
  * loads the saved capture: on select / resume, or on its own MS_IDLE_MS after the last command.
@@ -1517,7 +1517,15 @@ static void nam_start(void)
  *   w slot o3 data  program pack7(data <= 256 B) at slot + o (o: 3 x 7 bits, LSB first), erased slots only
  *                                                                     -> w slot rc
  *   c slot          check the header and the weights' CRC: the slot becomes valid     -> c slot rc
- *   s slot          save the slot (7F = built in) as the boot capture, then reboot   -> s slot rc
+ *   s slot          the slot on the running bank position, saved, then reboot        -> s slot rc
+ *   t               v0.16: the bank record                             -> t pack7(64 B)
+ *   u pack7(64 B)   v0.16: a new bank record (CRC checked), saved, then reboot         -> u 0 rc
+ *   p a1 .. an      v0.17: the P33 registers a1..an (7-bit addresses), then PC9 and the A B C H inputs (3 x 7 bits
+ *                   each)                                              -> p v1 .. vn (2 x 7 bits each) pc9 ports
+ *   l m1 m2 s       v0.16: LEDs := mask (m1 | m2 << 7, a 1 lights) for s seconds          -> l 0 0
+ *   z m             (v0.15 test) core 1 held and started again, no flash work: variant m (0 as nam_start,
+ *                   1 its write limits off while it starts, 2 = 1 + the fault flags cleared first)
+ *                                                                     -> z m start job ok  (NAM stays off)
  *   x               wipe the store and the settings (before a return to the stock firmware)  -> x 0 rc
  *   r               reboot (back to playing after put / wipe)                        -> r 0 0 */
 #define MS_MAGIC 0x314D424Au                     /* "JBM1" */
@@ -1525,7 +1533,7 @@ static void nam_start(void)
 #define MS_HDR 64u
 #define MS_DATA (A2L_NWEIGHTS * 4u)
 #define MS_SET_MAGIC 0x5453424Au                 /* "JBST" */
-#define MS_BUILTIN 0x7Fu                         /* the built-in capture's "slot" */
+#define MS_NONE 0x7Fu                            /* no capture */
 #define MS_IDLE_MS 20000u
 struct ms_hdr {
     uint32_t magic;
@@ -1539,7 +1547,32 @@ struct ms_hdr {
 typedef char ms_hdr_size_check[sizeof(struct ms_hdr) == MS_HDR ? 1 : -1];
 static struct ms_hdr ms_dir[MS_SLOTS];           /* the headers as read (boot, commit) */
 static uint8_t ms_valid, ms_erased;              /* masks: a valid capture; erased in this session (writable) */
-static uint8_t ms_active = MS_BUILTIN;           /* the capture running */
+static uint8_t ms_active = MS_NONE;              /* the capture running */
+static uint8_t ms_list[MS_SLOTS], ms_n;          /* the valid slots in order: the pedal's list */
+static uint8_t ms_xip_ok;                        /* v0.15: the store reads right through XIP (live switching) */
+static uint32_t bat_raw[4];                      /* v0.16: [3] = PC9 (raw 10 bits): half the battery voltage */
+/* v0.17: the UI in English (default) and Brazilian Portuguese, chosen in the bank menu, kept in the bank record */
+enum { S_USB_WRITE, S_REBOOT, S_EMPTY, S_BANK, S_EMPTY_POS, S_SEND_USB, S_MUTE, S_FX_OFF, S_UNSAVED, S_CAPTURES,
+       S_OF, S_MAX, S_NAM_OFF, S_BATTERY, S_INFO, S_HOME_BACK, S_SAVING, S_SAVE_ERR, S_LOADING, S_LOAD_ERR,
+       S_MENU, S_M_BANK, S_M_CAPA, S_M_CAPB, S_M_IN, S_M_OUT, S_M_LANG, S_M_SAVE, S_M_BACK, S_LANG, S_N };
+static const char *const STR[2][S_N] = {
+    {"USB: writing captures…", "Restarting…", "(empty)", "BANK ", "Empty slot · click PARA", "Send captures over USB",
+     "MUTED · press left switch", "EFFECT OFF · dry signal", "Not saved · hold PARA", "Captures: ", " of ", "max",
+     "NAM: off", "Battery: ", "INFO", "HOME to go back", "Saving…", "Could not save", "Loading…",
+     "Could not load the capture", "BANK MENU", "Bank", "Capture A", "Capture B", "Input (IN)", "Output (OUT)",
+     "Language", "Save", "Back", "English"},
+    {"USB: gravando capturas…", "Reiniciando…", "(vazio)", "BANCO ", "Posição vazia · clique PARA",
+     "Envie capturas pelo USB", "MUDO · pise no esquerdo", "EFEITO DESLIGADO · som direto", "Não salvo · segure PARA",
+     "Capturas: ", " de ", "máx", "NAM: desligado", "Bateria: ", "INFORMAÇÕES", "HOME para voltar", "Salvando…",
+     "Erro ao salvar", "Carregando…", "Erro ao carregar a captura", "MENU DO BANCO", "Banco", "Captura A", "Captura B",
+     "Entrada (IN)", "Saída (OUT)", "Idioma", "Salvar", "Voltar", "Português"},
+};
+static uint8_t ui_lang;                          /* 0 English, 1 Português */
+static uint8_t ui_usb;                           /* a USB host (also the "on 5 V" sign for now) */
+#define T(id) (STR[ui_lang][id])
+static uint8_t led_test, led_test_on;            /* v0.16: 'l': a fixed LED mask for a while (mapping) */
+static uint32_t led_test_until;
+static void ui_message(const char *s, uint16_t c);
 static uint8_t ms_paused;                        /* the NAM is stopped for flash work */
 static uint32_t ms_last_ms;
 static uint8_t ms_buf[260] __attribute__((aligned(4)));
@@ -1583,64 +1616,160 @@ static int ms_read_data(uint32_t slot, uint8_t *w)   /* the weights into w (MS_D
     return crc32_upd(0, w, MS_DATA) == ms_dir[slot].dcrc ? 0 : 3;
 }
 
+static void ms_list_build(void)
+{
+    uint32_t i;
+    for (i = ms_n = 0; i < MS_SLOTS; i++)
+        if (ms_valid >> i & 1u)
+            ms_list[ms_n++] = (uint8_t)i;
+}
+
 /* load a capture into the NAM (stopped: boot, or paused): 0 = ok; on an error the running one stays */
 static int ms_use(uint32_t slot)
 {
-    const float *w = MODEL_A2LITE;
-    float norm = MODEL_A2LITE_NORM;
-    const char *t = MODEL_A2LITE_TITLE, *pre = "NAM: ";
-    char *d = nam_label;
-    uint32_t i;
-    if (slot < MS_SLOTS) {
-        if (!(ms_valid >> slot & 1u))
-            return 1;
-        cap_state = 0;                           /* the JBW capture buffer is the scratch */
-        i = (uint32_t)ms_read_data(slot, (uint8_t *)cap_in);
-        if (i)
-            return (int)i;
-        w = (const float *)cap_in;
-        norm = ms_dir[slot].norm;
-        t = ms_dir[slot].title;
-        pre = "NAM 1: ";
-    } else
-        slot = MS_BUILTIN;
-    nam_ok = a2l_load(&nam, w, A2L_NWEIGHTS, nam_ring) == 0;
+    uint32_t rc;
+    if (slot >= MS_SLOTS || !(ms_valid >> slot & 1u))
+        return 1;
+    cap_state = 0;                               /* the JBW capture buffer is the scratch */
+    rc = (uint32_t)ms_read_data(slot, (uint8_t *)cap_in);
+    if (rc)
+        return (int)rc;
+    nam_ok = a2l_load(&nam, (const float *)cap_in, A2L_NWEIGHTS, nam_ring) == 0;
     if (nam_ok) {                                /* v0.13: the back half in fixed point, prewarmed again through it */
         a2lx_load(&namq, &nam);
         a2lx_reset(&nam, &namq);
     }
-    nam_trim = norm * NAM_OUT_BOOST;
+    nam_trim = ms_dir[slot].norm * NAM_OUT_BOOST;
     ms_active = (uint8_t)slot;
-    while (*pre)
-        *d++ = *pre++;
-    if (slot < MS_SLOTS)
-        nam_label[4] = (char)('1' + slot);
-    for (i = 0; i < 22u && t[i]; i++)            /* 29 columns on the line */
-        *d++ = t[i] >= 32 && t[i] < 127 ? t[i] : '?';
-    *d = 0;
     return nam_ok ? 0 : 4;
 }
 
-static uint32_t ms_set_read(void)                /* the saved boot capture; MS_BUILTIN if none */
+/* v0.15: the store as an unencrypted XIP window (as Felucca's fl_plain_window_init, from the store up: our code is
+ * far below), checked against the flash driver's reads. Then a capture loads straight from flash while core 1 runs */
+static void ms_xip_init(void)
 {
-    uint32_t off, r[4], v = MS_BUILTIN;
-    for (off = 0; off < 0x1000u; off += 16u) {
-        if (fl_read(MS_SET + off, r, 16) || r[0] != MS_SET_MAGIC || r[2] != ~r[1])
+    static uint8_t a[64];
+    uint32_t k, i, off;
+    const volatile uint8_t *x;
+    SFCENC_CON &= (uint8_t)~2u;
+    SFCENC_UNENC_L = FL_XIP(MS_BASE);
+    SFCENC_UNENC_H = 0x07FFFFFFu;
+    SFCENC_CON |= 2u;
+    fm1_irq_off();
+    fl_inval(MS_BASE, 0x000C2000u - MS_BASE);    /* drop any lines read decrypted */
+    fm1_irq_on();
+    ms_xip_ok = 1;
+    for (k = 0; k <= MS_SLOTS && ms_xip_ok; k++) {   /* every slot's header, then the settings */
+        off = k < MS_SLOTS ? MS_BASE + k * MS_SLOT_LEN : MS_SET;
+        if (fl_read(off, a, sizeof a)) {
+            ms_xip_ok = 0;
             break;
-        v = r[1];
+        }
+        x = (const volatile uint8_t *)FL_XIP(off);
+        for (i = 0; i < sizeof a; i++)
+            if (x[i] != a[i]) {
+                ms_xip_ok = 0;
+                break;
+            }
     }
-    return v;
 }
 
-static int ms_set_write(uint32_t slot)           /* one 16-byte record after the last; erase when full or foreign */
+/* v0.15: switch the running capture live from XIP (no flash driver, core 1 idle but running): ~0.2 s of silence */
+static int ms_switch(uint32_t slot)
 {
-    uint32_t off, r[4];
-    for (off = 0; off < 0x1000u; off += 16u) {
-        if (fl_read(MS_SET + off, r, 16))
-            return 2;
-        if ((r[0] & r[1] & r[2] & r[3]) == 0xFFFFFFFFu)
+    const uint8_t *src;
+    uint32_t w0;
+    if (!ms_xip_ok || slot >= MS_SLOTS || !(ms_valid >> slot & 1u) || !c1_ok)
+        return 1;
+    src = (const uint8_t *)FL_XIP(MS_BASE + slot * MS_SLOT_LEN + MS_HDR);
+    if (crc32_upd(0, src, MS_DATA) != ms_dir[slot].dcrc)
+        return 3;
+    au_mute = 1;                                 /* silence out, then the DMA repeats silent halves meanwhile */
+    delay_poll(12);
+    nam_on = 0;
+    w0 = fm1_ticks();
+    while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
+        FM1_C1_SYNC();
+    pipe_busy = 0;
+    nam_ok = a2l_load(&nam, (const float *)src, A2L_NWEIGHTS, nam_ring) == 0;
+    if (nam_ok) {
+        a2lx_load(&namq, &nam);
+        a2lx_reset(&nam, &namq);
+    }
+    nam_trim = ms_dir[slot].norm * NAM_OUT_BOOST;
+    ms_active = (uint8_t)slot;
+    pipe_primed = 0;
+    nam_on = nam_ok && c1_ok && !ui_bypass;
+    delay_poll(12);                              /* the pipeline refilled */
+    au_mute = 0;
+    return nam_ok ? 0 : 4;
+}
+
+/* v0.16: the settings sector holds bank records (64 B, appended; the last valid one counts; erased when full or
+ * foreign, as the v0.14 "JBST" records are). 6 banks (the FX, AMP, MOD, DLY, REV, CAB buttons) of 2 captures
+ * (A / B: slot or MS_NONE) with IN / OUT in half dB, and the bank and side to start on. */
+#define BK_MAGIC 0x314B424Au                     /* "JBK1" */
+#define BK_N 6u
+struct bk_bank { uint8_t cap[2]; int8_t in_hd, out_hd; };
+struct bk_rec {
+    uint32_t magic;
+    uint8_t bank, ab, lang, rsvd0;
+    struct bk_bank b[BK_N];
+    uint8_t rsvd[28];
+    uint32_t crc;                                /* CRC-32 of the 60 bytes above */
+};
+typedef char bk_rec_size_check[sizeof(struct bk_rec) == 64u ? 1 : -1];
+static struct bk_rec bk, bk_saved;               /* running, as last saved */
+
+static int bk_ok(const struct bk_rec *r)
+{
+    uint32_t i;
+    if (r->magic != BK_MAGIC || r->crc != crc32_upd(0, (const uint8_t *)r, 60) || r->bank >= BK_N || r->ab > 1u ||
+        r->lang > 1u)
+        return 0;
+    for (i = 0; i < BK_N; i++)
+        if (r->b[i].in_hd < -24 || r->b[i].in_hd > 24 || r->b[i].out_hd < -48 || r->b[i].out_hd > 24)
+            return 0;
+    return 1;
+}
+
+static void bk_defaults(void)                    /* the stored captures in order: bank 1 A, 1 B, 2 A, ... */
+{
+    uint32_t i;
+    for (i = 0; i < sizeof bk; i++)
+        ((uint8_t *)&bk)[i] = 0;
+    bk.magic = BK_MAGIC;
+    for (i = 0; i < 2u * BK_N; i++)
+        bk.b[i / 2u].cap[i & 1u] = i < ms_n ? ms_list[i] : (uint8_t)MS_NONE;
+}
+
+static int bk_read(void)                         /* the last valid record into bk: 1 = found */
+{
+    static struct bk_rec r;
+    uint32_t off, found = 0;
+    for (off = 0; off < 0x1000u; off += 64u) {
+        if (fl_read(MS_SET + off, &r, 64) || r.magic != BK_MAGIC)
             break;
-        if (r[0] != MS_SET_MAGIC) {
+        if (bk_ok(&r)) {
+            bk = r;
+            found = 1;
+        }
+    }
+    return (int)found;
+}
+
+static int bk_write(void)                        /* bk as a new record (flash: core 1 held, see ms_pause) */
+{
+    uint32_t off, w[16], i, blank;
+    bk.crc = crc32_upd(0, (const uint8_t *)&bk, 60);
+    for (off = 0; off < 0x1000u; off += 64u) {
+        if (fl_read(MS_SET + off, w, 64))
+            return 2;
+        for (i = 0, blank = 1; i < 16u; i++)
+            blank &= w[i] == 0xFFFFFFFFu;
+        if (blank)
+            break;
+        if (w[0] != BK_MAGIC) {
             off = 0x1000u;
             break;
         }
@@ -1650,11 +1779,36 @@ static int ms_set_write(uint32_t slot)           /* one 16-byte record after the
             return 5;
         off = 0;
     }
-    r[0] = MS_SET_MAGIC;
-    r[1] = slot;
-    r[2] = ~slot;
-    r[3] = 0;
-    return fl_prog(MS_SET + off, (const uint8_t *)r, 16) ? 6 : 0;
+    return fl_prog(MS_SET + off, (const uint8_t *)&bk, 64) ? 6 : 0;
+}
+
+static int bk_dirty(void)                        /* the banks differ from the saved ones (not the bank / side) */
+{
+    uint32_t i;
+    if (bk.lang != bk_saved.lang)
+        return 1;
+    for (i = 0; i < BK_N; i++)
+        if (bk.b[i].cap[0] != bk_saved.b[i].cap[0] || bk.b[i].cap[1] != bk_saved.b[i].cap[1] ||
+            bk.b[i].in_hd != bk_saved.b[i].in_hd || bk.b[i].out_hd != bk_saved.b[i].out_hd)
+            return 1;
+    return 0;
+}
+
+static float db_half(int32_t hd)                 /* 10^(hd / 40): half-dB steps, no libm */
+{
+    float v = 1.0f;
+    const float k = hd < 0 ? 0.94406088f : 1.05925373f;
+    if (hd < 0)
+        hd = -hd;
+    while (hd--)
+        v *= k;
+    return v;
+}
+
+static uint32_t bk_slot(void)                    /* the running position's capture, MS_NONE if empty / gone */
+{
+    uint32_t s = bk.b[bk.bank].cap[bk.ab];
+    return s < MS_SLOTS && (ms_valid >> s & 1u) ? s : MS_NONE;
 }
 
 static void ms_pause(void)                       /* NAM and audio off, core 1 held: flash work is safe */
@@ -1673,8 +1827,7 @@ static void ms_pause(void)                       /* NAM and audio off, core 1 he
     }
     nam_on = 0;
     ms_paused = 1;
-    text_at(8, 4, "                             ", C_HOT, C_BG);
-    text_at(8, 4, "USB: CAPTURAS...", C_WARN, C_BG);
+    ui_message(T(S_USB_WRITE), C_WARN);
 }
 
 static void ms_resume(void)                      /* a reboot: core 1 cannot be started twice (see above) */
@@ -1682,8 +1835,7 @@ static void ms_resume(void)                      /* a reboot: core 1 cannot be s
     bootguard.pending = 0;                       /* a wanted reboot, not a failed boot (two = the rescue loader) */
     bootguard.failed = 0;
     BG_SEAL();
-    text_at(8, 4, "                             ", C_HOT, C_BG);
-    text_at(8, 4, "REINICIANDO...", C_WARN, C_BG);
+    ui_message(T(S_REBOOT), C_WARN);
     delay_poll(100);                             /* the reply goes out */
     usb_detach();
     fm1_delay_ms(30);
@@ -1711,8 +1863,8 @@ static void ms_dir_send(void)
         ota_wire_send(msg, k);
     }
     msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'd';
-    msg[5] = 0x7F; msg[6] = ms_active; msg[7] = MS_PROTO; msg[8] = 0xF7;
-    ota_wire_send(msg, 9);
+    msg[5] = 0x7F; msg[6] = ms_active; msg[7] = MS_PROTO; msg[8] = ms_xip_ok; msg[9] = bk.bank; msg[10] = 0xF7;
+    ota_wire_send(msg, 11);
 }
 
 static int ms_erase_slot(uint32_t slot)
@@ -1771,9 +1923,11 @@ static int ms_service(const uint8_t *p, uint32_t n)
     } else if (cmd == 's' && n == 5u) {
         ota_frame_done();
         ms_pause();
-        rc = slot == MS_BUILTIN || (slot < MS_SLOTS && (ms_valid >> slot & 1u)) ? 0u : 1u;
-        if (rc == 0)
-            rc = flash_ok ? (uint32_t)ms_set_write(slot) : 2u;
+        rc = slot < MS_SLOTS && (ms_valid >> slot & 1u) ? 0u : 1u;
+        if (rc == 0) {
+            bk.b[bk.bank].cap[bk.ab] = (uint8_t)slot;
+            rc = flash_ok ? (uint32_t)bk_write() : 2u;
+        }
         ms_reply('s', slot, rc);
         ms_resume();
     } else if (cmd == 'x' && n == 4u) {
@@ -1785,6 +1939,90 @@ static int ms_service(const uint8_t *p, uint32_t n)
         if (!rc && fl_erase_sector(MS_SET))
             rc = 5;
         ms_reply('x', 0, rc);
+    } else if (cmd == 'z' && n == 5u) {
+        uint32_t st, job = 0x7Eu;
+        ota_frame_done();
+        ms_pause();                              /* core 1 held, as for flash work (none here) */
+        delay_poll(50);
+        if (slot >= 1u)
+            CX2(0x34Cu) = 0;                     /* its write limits off while it starts */
+        if (slot >= 2u) {
+            CX2(0x248u) = 0xFFFFFFFFu;           /* DBG_MSG_CLR */
+            *(volatile uint32_t *)0x1EEF2D4u = 0xFFFFFFFFu;   /* its EMU_MSG */
+        }
+        if (slot == 0u)
+            c1_guard_setup();
+        st = (uint32_t)fm1_cpu1_start();
+        if (st == 0u) {
+            c1_test_out = 0;
+            job = fm1_cpu1_run(c1_int_job, 7u) ? (uint32_t)fm1_cpu1_wait() : 0x7Du;
+        }
+        if (slot >= 1u)
+            c1_guard_setup();
+        {
+            uint8_t m[10];
+            m[0] = 0xF0; m[1] = 0x7D; m[2] = 'J'; m[3] = 'B'; m[4] = 'z'; m[5] = (uint8_t)(slot & 0x7Fu);
+            m[6] = (uint8_t)(st & 0x7Fu); m[7] = (uint8_t)(job & 0x7Fu); m[8] = c1_test_out == 22u; m[9] = 0xF7;
+            ota_wire_send(m, 10);
+        }
+        fm1_cpu1_hold();                         /* paused again: the 20 s reboot follows */
+        c1_ok = 0;
+    } else if (cmd == 't' && n == 4u) {
+        uint8_t m[96];
+        uint32_t k;
+        ota_frame_done();
+        bk.crc = crc32_upd(0, (const uint8_t *)&bk, 60);
+        m[0] = 0xF0; m[1] = 0x7D; m[2] = 'J'; m[3] = 'B'; m[4] = 't';
+        k = 5u + ota_pack7((const uint8_t *)&bk, 64, m + 5);
+        m[k++] = 0xF7;
+        ota_wire_send(m, k);
+    } else if (cmd == 'u' && n >= 4u + 74u) {
+        static struct bk_rec r;
+        uint32_t len = ota_unpack7(p + 4, n - 4u, (uint8_t *)&r, sizeof r);
+        ota_frame_done();
+        rc = len >= 64u && bk_ok(&r) ? 0u : 1u;
+        if (rc == 0) {
+            ms_pause();
+            bk = r;
+            rc = flash_ok ? (uint32_t)bk_write() : 2u;
+        }
+        ms_reply('u', 0, rc);
+        if (rc == 0)
+            ms_resume();
+    } else if (cmd == 'p' && n >= 4u && n <= 4u + 24u) {
+        static const uint8_t PORT[4] = {P_A, P_B, P_C, P_H};
+        uint8_t m[96], ad[24];
+        uint32_t k = 5u, i, na = n - 4u;
+        for (i = 0; i < na; i++)
+            ad[i] = p[4 + i];
+        ota_frame_done();
+        m[0] = 0xF0; m[1] = 0x7D; m[2] = 'J'; m[3] = 'B'; m[4] = 'p';
+        for (i = 0; i < na; i++) {
+            uint8_t v = fm1_p33_read(ad[i]);
+            m[k++] = v & 0x7Fu;
+            m[k++] = v >> 7;
+        }
+        m[k++] = (uint8_t)(bat_raw[3] & 0x7Fu);
+        m[k++] = (uint8_t)(bat_raw[3] >> 7 & 0x7Fu);
+        for (i = 0; i < 4u; i++) {
+            uint32_t v = PORT_REG(PORT[i], R_IN) & 0xFFFFu;
+            m[k++] = (uint8_t)(v & 0x7Fu);
+            m[k++] = (uint8_t)(v >> 7 & 0x7Fu);
+            m[k++] = (uint8_t)(v >> 14 & 0x7Fu);
+        }
+        m[k++] = 0xF7;
+        ota_wire_send(m, k);
+    } else if (cmd == 'l' && n == 7u) {
+        ota_frame_done();
+        led_test = (uint8_t)(p[4] | p[5] << 7);
+        led_test_until = now_ms() + p[6] * 1000u;
+        led_test_on = 1;
+        {
+            static char t[12] = "LED 0x00";
+            hex(t + 6, led_test, 2);
+            ui_message(t, C_HOT);
+        }
+        ms_reply('l', 0, 0);
     } else if (cmd == 'r' && n == 4u) {
         ota_frame_done();
         ms_reply('r', 0, 0);
@@ -1792,6 +2030,675 @@ static int ms_service(const uint8_t *p, uint32_t n)
     } else
         return 0;
     return 1;
+}
+
+/* -------------------------------------------------------------------- UI --- */
+/* v0.16: banks. Panel -> actions in one place (din bits: DIN[] order, docs/06; 9..11 = the PC10 ladder); change
+ * here to remap.
+ *   FX AMP MOD DLY REV CAB   banks 1..6 (two captures each, A / B, with their IN / OUT levels)
+ *   right footswitch         A <-> B in the bank
+ *   left footswitch          tap: effect on / off (off = the dry signal); held: MUTE, a press un-mutes
+ *   PARA click               the bank menu (bank, captures A / B, IN, OUT, save); turn: move / change
+ *   PARA held 1 s            save (banks, and the bank / side to start on): a reboot, core 1 cannot restart
+ *   HOME                     info screen / back          MASTER   output volume */
+#define BTN_SEL (1u << 0)                         /* PH6: PARA click */
+#define BTN_INFO (1u << 1)                        /* PA1: HOME */
+#define BTN_FS_L (1u << 5)                        /* PA3: left footswitch */
+#define BTN_FS_R (1u << 6)                        /* PA2: right footswitch */
+static const uint32_t BTN_BANK[BK_N] = {1u << 2, 1u << 3, 1u << 4, 1u << 9, 1u << 10, 1u << 11};
+static const char *const BANK_NAME[BK_N] = {"FX", "AMP", "MOD", "DLY", "REV", "CAB"};
+static const uint8_t BANK_LED[BK_N] = {1, 2, 3, 4, 5, 6};   /* shift-register bits: to be mapped ('l') */
+#define ENC_A 7u                                  /* PC1 */
+#define ENC_B 8u                                  /* PC0: leads when turned clockwise */
+#define UI_HOLD_MS 1000u                          /* PARA held: save */
+#define UI_MUTE_MS 600u                           /* left footswitch held: mute */
+#define UI_MSG_MS 2500u
+
+#define C_TITLE RGB(246, 240, 230)
+#define C_SUB RGB(150, 146, 140)
+#define C_LINE RGB(40, 40, 46)
+#define C_BAR RGB(40, 40, 46)
+#define C_ROW RGB(34, 34, 40)
+
+/* ---- battery (v0.17): PC9 (SARADC ch 8) = half the battery voltage, against a 3.3 V reference (to be calibrated).
+ * The PMU's own VBAT / VBG channels read nothing here (v0.16), and the internal charger is off: the board has its
+ * own charger chip (its LED). On 5 V = a USB host for now (its status pin: to be found, HOME shows the ports). */
+#define BAT_REF_MV 6600u                          /* 3300 mV x 2 (the divider) at full scale */
+static uint32_t bat_mv, bat_pct;
+static uint8_t bat_5v, bat_shown = 0xFFu;
+static void bat_update(int32_t pc9)
+{
+    static const uint16_t MV[] = {3300, 3550, 3680, 3750, 3820, 3900, 3990, 4080, 4180};
+    uint32_t mv, i;
+    if (pc9 < 0)
+        return;
+    bat_raw[3] = (uint32_t)pc9;
+    mv = (uint32_t)pc9 * BAT_REF_MV / 1023u;
+    bat_mv = bat_mv ? (bat_mv * 3u + mv) / 4u : mv;
+    bat_5v = ui_usb;
+    for (i = 0; i + 1u < sizeof MV / sizeof MV[0] && bat_mv >= MV[i + 1u]; i++)
+        ;
+    bat_pct = bat_mv <= MV[0] ? 0u : i + 1u >= sizeof MV / sizeof MV[0] ? 100u
+            : i * 100u / 8u + (bat_mv - MV[i]) * 100u / 8u / (MV[i + 1u] - MV[i]);
+}
+
+struct aafont { uint32_t h; const uint8_t *w; const uint16_t *off; const uint8_t *bmp; };
+static const struct aafont FS = {FONT_S_H, FONT_S_W, FONT_S_OFF, FONT_S_BMP};
+static const struct aafont FL = {FONT_L_H, FONT_L_W, FONT_L_OFF, FONT_L_BMP};
+
+enum { UI_MAIN, UI_INFO, UI_MENU };
+static uint8_t ui_screen, ui_dirty;
+static uint32_t ui_msg_ms;
+static const char *ui_msg;
+static uint16_t ui_msg_c;
+
+static uint32_t glyph_next(const char **s)        /* UTF-8 -> glyph index (fonts_aa.h); 0xFFFF at the end */
+{
+    const uint8_t *p = (const uint8_t *)*s;
+    uint32_t c = p[0], u;
+    if (!c)
+        return 0xFFFFu;
+    if (c < 0x80u) {
+        *s += 1;
+        return c >= 32u && c < 127u ? c - 32u : 31u;   /* 31: '?' */
+    }
+    if ((c & 0xE0u) == 0xC0u && (p[1] & 0xC0u) == 0x80u) {
+        u = (c & 0x1Fu) << 6 | (p[1] & 0x3Fu);
+        *s += 2;
+        return u >= 0xA0u && u <= 0xFFu ? 95u + (u - 0xA0u) : 31u;
+    }
+    if ((c & 0xF0u) == 0xE0u && p[1] && p[2]) {   /* 3 bytes: only the ellipsis is drawn ("...") */
+        u = (c & 0x0Fu) << 12 | (p[1] & 0x3Fu) << 6 | (p[2] & 0x3Fu);
+        *s += 3;
+        return u == 0x2026u ? 0xFFFEu : 31u;
+    }
+    *s += 1;
+    return 31u;
+}
+
+static uint32_t aa_width(const struct aafont *f, const char *s)
+{
+    uint32_t g, w = 0;
+    while ((g = glyph_next(&s)) != 0xFFFFu)
+        w += g == 0xFFFEu ? 3u * f->w[14] : f->w[g];
+    return w;
+}
+
+/* text in the box [x, x + w) x [y, y + font height): the box is cleared to bg; align 0 left, 1 centre, 2 right */
+static void aa_text(uint32_t x, uint32_t y, uint32_t w, const char *s, const struct aafont *f, uint16_t fg,
+                    uint16_t bg, uint32_t align)
+{
+    uint16_t pal[16];
+    uint32_t r, k, tw = aa_width(f, s), x0;
+    for (k = 0; k < 16u; k++) {                   /* fg over bg, 16 alpha steps */
+        uint32_t fr = fg >> 11, fgc = fg >> 5 & 63u, fb = fg & 31u, br = bg >> 11, bgc = bg >> 5 & 63u, bb = bg & 31u;
+        pal[k] = (uint16_t)(((fr * k + br * (15u - k)) / 15u) << 11 | ((fgc * k + bgc * (15u - k)) / 15u) << 5 |
+                            (fb * k + bb * (15u - k)) / 15u);
+    }
+    x0 = align == 1u && tw < w ? (w - tw) / 2u : align == 2u && tw < w ? w - tw : 0u;
+    lcd_window(x, y, x + w - 1u, y + f->h - 1u);
+    for (r = 0; r < f->h; r++) {
+        const char *p = s;
+        uint32_t g, px = x0, i;
+        for (i = 0; i < w; i++) {
+            lcd_buf[2u * i] = (uint8_t)(bg >> 8);
+            lcd_buf[2u * i + 1u] = (uint8_t)bg;
+        }
+        while ((g = glyph_next(&p)) != 0xFFFFu && px < w) {
+            uint32_t n = g == 0xFFFEu ? 3u : 1u, gi = g == 0xFFFEu ? 14u : g, gw = f->w[gi], c, rep;
+            for (rep = 0; rep < n; rep++, px += gw) {
+                const uint8_t *b = f->bmp + f->off[gi];
+                for (c = 0; c < gw && px + c < w; c++) {
+                    uint32_t idx = r * gw + c, a = b[idx >> 1];
+                    a = idx & 1u ? a & 15u : a >> 4;
+                    if (a) {
+                        lcd_buf[2u * (px + c)] = (uint8_t)(pal[a] >> 8);
+                        lcd_buf[2u * (px + c) + 1u] = (uint8_t)pal[a];
+                    }
+                }
+            }
+        }
+        lcd_data(lcd_buf, w * 2u);
+        poll();
+    }
+}
+
+/* the capture's name in two lines of FONT_L, broken after a space, '-' or '_' when it can */
+static void ui_wrap(const char *t, char *l1, char *l2, uint32_t maxw)
+{
+    char buf[25];
+    uint32_t n = 0, i, cut, brk, w;
+    while (n < 24u && t[n]) {
+        buf[n] = t[n] >= 32 && t[n] < 127 ? t[n] : '?';
+        n++;
+    }
+    buf[n] = 0;
+    for (i = 0, w = 0, brk = 0, cut = n; i < n; i++) {
+        w += FL.w[(uint8_t)buf[i] - 32u];
+        if (w > maxw) {
+            cut = brk ? brk : i;
+            break;
+        }
+        if (buf[i] == ' ' || buf[i] == '-' || buf[i] == '_')
+            brk = i + 1u;
+    }
+    for (i = 0; i < cut; i++)
+        l1[i] = buf[i];
+    l1[cut] = 0;
+    while (buf[cut] == ' ')
+        cut++;
+    for (i = 0; cut + i <= n; i++)
+        l2[i] = buf[cut + i];
+    if (aa_width(&FL, l2) > maxw) {               /* too long for two lines: cut, "..." (buffers of 28) */
+        uint32_t m = 0;
+        while (l2[m])
+            m++;
+        do {
+            m--;
+            l2[m] = '.'; l2[m + 1u] = '.'; l2[m + 2u] = '.'; l2[m + 3u] = 0;
+        } while (m && aa_width(&FL, l2) > maxw);
+    }
+}
+
+static char *put_s(char *d, const char *s)
+{
+    while (*s)
+        *d++ = *s++;
+    *d = 0;
+    return d;
+}
+
+static char *put_db_n(char *d, int32_t hd)        /* half dB -> "+1.5" */
+{
+    uint32_t u = (uint32_t)(hd < 0 ? -hd : hd);
+    *d++ = hd < 0 ? '-' : '+';
+    if (u / 2u >= 10u)
+        *d++ = (char)('0' + u / 20u);
+    *d++ = (char)('0' + u / 2u % 10u);
+    *d++ = '.';
+    *d++ = u & 1u ? '5' : '0';
+    *d = 0;
+    return d;
+}
+
+static char *put_db(char *d, int32_t hd)          /* half dB -> "+1.5 dB" */
+{
+    return put_s(put_db_n(d, hd), " dB");
+}
+
+static const char *slot_name(uint32_t s)
+{
+    return s < MS_SLOTS && (ms_valid >> s & 1u) ? ms_dir[s].title : T(S_EMPTY);
+}
+
+#define UI_TY 66u                                 /* the name: two lines of FONT_L */
+#define UI_SY 136u                                /* the status line */
+#define UI_MY 166u                                /* the meters: IN, OUT, VOL rows, 22 px apart */
+
+static void ui_message(const char *s, uint16_t c)  /* the status line for UI_MSG_MS */
+{
+    ui_msg = s;
+    ui_msg_c = c;
+    ui_msg_ms = now_ms();
+    if (ui_screen == UI_MAIN)
+        aa_text(12, UI_SY, 216, s, &FS, c, C_BG, 0);
+}
+
+static void ui_vol(int32_t pot)
+{
+    uint32_t w = pot < 0 ? 0u : (uint32_t)pot * 136u / 1023u;
+    if (ui_screen != UI_MAIN)
+        return;
+    if (w)
+        lcd_fill(56, UI_MY + 2u * 22u + 6u, w, 8, C_HOT);
+    if (w < 136u)
+        lcd_fill(56u + w, UI_MY + 2u * 22u + 6u, 136u - w, 8, C_BAR);
+}
+
+static void ui_battery(void)                      /* top right: the percentage and a battery (green: on 5 V) */
+{
+    static char t[8];
+    uint16_t c = bat_5v ? C_OK : bat_pct < 15u ? C_ERR : C_SUB;
+    uint32_t w;
+    if (ui_screen != UI_MAIN || !bat_mv)
+        return;
+    bat_shown = (uint8_t)(bat_pct | bat_5v << 7);
+    {
+        char *d = t;
+        if (bat_5v && bat_pct < 100u)
+            *d++ = '+';                           /* charging */
+        if (bat_pct >= 100u)
+            *d++ = '1';
+        if (bat_pct >= 10u)
+            *d++ = (char)('0' + bat_pct / 10u % 10u);
+        *d++ = (char)('0' + bat_pct % 10u);
+        put_s(d, "%");
+    }
+    aa_text(150, 6, 56, t, &FS, c, C_BG, 2);
+    lcd_fill(210, 9, 20, 1, c);                   /* the outline, the tip, the fill */
+    lcd_fill(210, 20, 20, 1, c);
+    lcd_fill(210, 9, 1, 12, c);
+    lcd_fill(229, 9, 1, 12, c);
+    lcd_fill(230, 12, 2, 6, c);
+    w = bat_pct * 16u / 100u;
+    if (w)
+        lcd_fill(212, 11, w, 8, c);
+    if (w < 16u)
+        lcd_fill(212u + w, 11, 16u - w, 8, C_BG);
+}
+
+static void ui_header(void)
+{
+    static char h[24];
+    char *d = put_s(h, T(S_BANK));
+    *d++ = (char)('1' + bk.bank);
+    put_s(put_s(d, " · "), BANK_NAME[bk.bank]);
+    aa_text(12, 6, 146, h, &FS, C_SUB, C_BG, 0);
+    ui_battery();
+}
+
+static void ui_pill(uint32_t x, const char *s, uint32_t on)
+{
+    lcd_fill(x, 38, 30, 22, on ? C_HOT : C_ROW);
+    aa_text(x + 3u, 39, 24, s, &FS, on ? C_BG : C_SUB, on ? C_HOT : C_ROW, 1);
+}
+
+static void ui_draw(uint32_t all)
+{
+    static char l1[28], l2[28], lv[32];
+    const struct bk_bank *b = &bk.b[bk.bank];
+    uint32_t slot = bk_slot();
+    const char *sub = "";
+    uint16_t subc = C_SUB, tc = C_TITLE;
+    if (ui_screen != UI_MAIN)
+        return;
+    if (all) {
+        lcd_fill(0, 0, LCD_W, LCD_H, C_BG);
+        lcd_fill(12, 30, 216, 1, C_LINE);
+        aa_text(12, UI_MY, 40, "IN", &FS, C_SUB, C_BG, 0);
+        aa_text(12, UI_MY + 22u, 40, "OUT", &FS, C_SUB, C_BG, 0);
+        aa_text(12, UI_MY + 44u, 40, "VOL", &FS, C_SUB, C_BG, 0);
+    }
+    ui_header();
+    ui_pill(12, "A", bk.ab == 0u);
+    ui_pill(46, "B", bk.ab == 1u);
+    put_db_n(put_s(put_db_n(put_s(lv, "IN "), b->in_hd), " · OUT "), b->out_hd);
+    aa_text(84, 40, 144, lv, &FS, C_DIM, C_BG, 2);
+    if (slot == MS_NONE) {
+        ui_wrap(T(S_EMPTY), l1, l2, 216);
+        tc = C_DIM;
+        sub = ms_n ? T(S_EMPTY_POS) : T(S_SEND_USB);
+    } else
+        ui_wrap(ms_dir[slot].title, l1, l2, 216);
+    if (au_umute) {
+        tc = C_DIM;
+        sub = T(S_MUTE);
+        subc = C_ERR;
+    } else if (ui_bypass) {
+        tc = C_DIM;
+        sub = T(S_FX_OFF);
+        subc = C_WARN;
+    } else if (slot != MS_NONE && bk_dirty())
+        sub = T(S_UNSAVED);
+    aa_text(12, UI_TY, 216, l1, &FL, tc, C_BG, 0);
+    aa_text(12, UI_TY + FL.h, 216, l2, &FL, tc, C_BG, 0);
+    if (ui_msg && now_ms() - ui_msg_ms < UI_MSG_MS) {
+        sub = ui_msg;
+        subc = ui_msg_c;
+    }
+    aa_text(12, UI_SY, 216, sub, &FS, subc, C_BG, 0);
+}
+
+static char *put_u(char *d, uint32_t v)          /* decimal */
+{
+    char t[10];
+    uint32_t n = 0;
+    do
+        t[n++] = (char)('0' + v % 10u);
+    while ((v /= 10u) != 0u);
+    while (n)
+        *d++ = t[--n];
+    *d = 0;
+    return d;
+}
+
+static void ui_info(void)                         /* HOME: version, captures, CPU, battery, the input ports */
+{
+    static char l[48];
+    uint32_t y = 40, k;
+    char *d;
+    if (ui_screen != UI_INFO)
+        return;
+    aa_text(12, y, 216, "Juice-Box " JB_VERSION, &FS, C_TITLE, C_BG, 0);
+    y += 22u;
+    put_u(put_s(put_u(put_s(l, T(S_CAPTURES)), ms_n), T(S_OF)), MS_SLOTS);
+    aa_text(12, y, 216, l, &FS, C_SUB, C_BG, 0);
+    y += 22u;
+    d = put_u(put_s(l, "NAM: "), nam_us);
+    d = put_u(put_s(put_s(put_s(d, " us ("), T(S_MAX)), " "), nam_us_max);
+    put_s(d, ")");
+    aa_text(12, y, 216, nam_on ? l : T(S_NAM_OFF), &FS, C_SUB, C_BG, 0);
+    y += 22u;
+    d = put_u(put_s(l, T(S_BATTERY)), bat_mv);
+    put_s(put_u(put_s(d, " mV ("), bat_pct), "%)");
+    aa_text(12, y, 216, l, &FS, C_SUB, C_BG, 0);
+    y += 22u;
+    d = put_u(put_s(l, "PC9 "), bat_raw[3]);
+    put_s(d, ui_usb ? "  USB" : "");
+    aa_text(12, y, 216, l, &FS, C_SUB, C_BG, 0);
+    y += 22u;
+    {                                             /* the ports' inputs: the charger's status pin, to be found */
+        static const uint8_t PORT[4] = {P_A, P_B, P_C, P_H};
+        d = l;
+        for (k = 0; k < 4u; k++) {
+            *d++ = "ABCH"[k];
+            hex(d, PORT_REG(PORT[k], R_IN) & 0xFFFFu, 4);
+            d += 4;
+            *d++ = ' ';
+        }
+        *d = 0;
+    }
+    aa_text(12, y, 216, l, &FS, C_SUB, C_BG, 0);
+    y += 22u;
+    aa_text(12, y, 216, "ID " FELUCCA_ID, &FS, C_SUB, C_BG, 0);
+}
+
+static void ui_info_open(void)
+{
+    ui_screen = UI_INFO;
+    lcd_fill(0, 0, LCD_W, LCD_H, C_BG);
+    aa_text(12, 6, 216, T(S_INFO), &FS, C_SUB, C_BG, 0);
+    lcd_fill(12, 30, 216, 1, C_LINE);
+    aa_text(12, 214, 216, T(S_HOME_BACK), &FS, C_DIM, C_BG, 0);
+    ui_info();
+}
+
+static void bk_save_reboot(void)                  /* the banks, the bank / side: saved, then a reboot */
+{
+    uint32_t rc;
+    ms_pause();
+    ui_message(T(S_SAVING), C_WARN);
+    rc = flash_ok ? (uint32_t)bk_write() : 2u;
+    if (rc)
+        ui_message(T(S_SAVE_ERR), C_ERR);
+    ms_resume();
+}
+
+static void bk_gains(void)
+{
+    nam_in = db_half(bk.b[bk.bank].in_hd);
+    nam_out = db_half(bk.b[bk.bank].out_hd);
+}
+
+/* play the bank / side now: its levels, its capture (live from XIP; without XIP: saved, then a reboot) */
+static void bk_go(uint32_t bank, uint32_t ab)
+{
+    uint32_t slot;
+    bk.bank = (uint8_t)bank;
+    bk.ab = (uint8_t)ab;
+    slot = bk_slot();
+    if (slot == MS_NONE) {                        /* an empty position: the dry signal */
+        au_mute = 1;
+        delay_poll(12);
+        nam_on = 0;
+        nam_ok = 0;
+        ms_active = MS_NONE;
+        bk_gains();
+        delay_poll(6);
+        au_mute = 0;
+    } else if (slot != ms_active || !nam_ok) {
+        if (!ms_xip_ok) {
+            bk_save_reboot();
+            return;
+        }
+        bk_gains();
+        ui_message(T(S_LOADING), C_HOT);
+        if (ms_switch(slot))
+            ui_message(T(S_LOAD_ERR), C_ERR);
+        else
+            ui_msg = 0;
+    } else
+        bk_gains();
+    ui_draw(0);
+}
+
+/* ---- the bank menu (PARA): rows, a value being edited */
+enum { MI_BANK, MI_CAPA, MI_CAPB, MI_IN, MI_OUT, MI_LANG, MI_SAVE, MI_BACK, MI_N };
+static uint8_t mn_pos, mn_edit;
+static int32_t mn_val;
+
+static void mn_value(uint32_t i, int32_t v, char *d)
+{
+    switch (i) {
+    case MI_BANK:
+        put_s(put_s(d, "1 · "), BANK_NAME[v]);
+        d[0] = (char)('1' + v);
+        break;
+    case MI_CAPA:
+    case MI_CAPB:
+        put_s(d, v < 0 ? T(S_EMPTY) : slot_name(ms_list[v]));
+        break;
+    case MI_LANG:
+        put_s(d, T(S_LANG));
+        break;
+    case MI_IN:
+    case MI_OUT:
+        put_db(d, v);
+        break;
+    default:
+        d[0] = 0;
+    }
+}
+
+static int32_t mn_current(uint32_t i)             /* the row's value now (captures: the list index, -1 empty) */
+{
+    const struct bk_bank *b = &bk.b[bk.bank];
+    uint32_t k;
+    switch (i) {
+    case MI_BANK: return bk.bank;
+    case MI_CAPA:
+    case MI_CAPB:
+        for (k = 0; k < ms_n; k++)
+            if (ms_list[k] == b->cap[i - MI_CAPA])
+                return (int32_t)k;
+        return -1;
+    case MI_IN: return b->in_hd;
+    case MI_OUT: return b->out_hd;
+    default: return 0;
+    }
+}
+
+static void mn_row(uint32_t i)
+{
+    static const uint8_t LABEL[MI_N] = {S_M_BANK, S_M_CAPA, S_M_CAPB, S_M_IN, S_M_OUT, S_M_LANG, S_M_SAVE, S_M_BACK};
+    static char v[32];
+    uint32_t y = 36u + i * 24u, sel = i == mn_pos;
+    uint16_t bg = sel ? C_ROW : C_BG;
+    lcd_fill(6, y - 2u, 228, 23, bg);
+    aa_text(12, y, 96, T(LABEL[i]), &FS, sel ? C_TITLE : C_SUB, bg, 0);
+    mn_value(i, sel && mn_edit ? mn_val : mn_current(i), v);
+    aa_text(110, y, 118, v, &FS, sel && mn_edit ? C_HOT : C_TITLE, bg, 2);
+}
+
+static void mn_open(void)
+{
+    uint32_t i;
+    ui_screen = UI_MENU;
+    mn_pos = 0;
+    mn_edit = 0;
+    lcd_fill(0, 0, LCD_W, LCD_H, C_BG);
+    aa_text(12, 6, 216, T(S_MENU), &FS, C_SUB, C_BG, 0);
+    lcd_fill(12, 30, 216, 1, C_LINE);
+    for (i = 0; i < MI_N; i++)
+        mn_row(i);
+}
+
+static void mn_close(void)
+{
+    ui_screen = UI_MAIN;
+    ui_draw(1);
+    ui_dirty = 1;
+}
+
+static void mn_turn(int32_t d)
+{
+    uint32_t old = mn_pos;
+    if (!mn_edit) {
+        mn_pos = (uint8_t)((mn_pos + MI_N + (uint32_t)(d > 0 ? 1 : MI_N - 1)) % MI_N);
+        mn_row(old);
+        mn_row(mn_pos);
+        return;
+    }
+    switch (mn_pos) {
+    case MI_BANK: mn_val = (mn_val + (int32_t)BK_N + d) % (int32_t)BK_N; break;
+    case MI_CAPA:
+    case MI_CAPB: mn_val = (mn_val + 1 + (int32_t)ms_n + 1 + d) % ((int32_t)ms_n + 1) - 1; break;
+    case MI_IN:                                   /* the levels change live */
+        mn_val = mn_val + d < -24 ? -24 : mn_val + d > 24 ? 24 : mn_val + d;
+        bk.b[bk.bank].in_hd = (int8_t)mn_val;
+        bk_gains();
+        break;
+    case MI_OUT:
+        mn_val = mn_val + d < -48 ? -48 : mn_val + d > 24 ? 24 : mn_val + d;
+        bk.b[bk.bank].out_hd = (int8_t)mn_val;
+        bk_gains();
+        break;
+    }
+    mn_row(mn_pos);
+}
+
+static void mn_click(void)
+{
+    uint32_t i;
+    if (mn_pos == MI_SAVE) {
+        bk_save_reboot();
+        return;
+    }
+    if (mn_pos == MI_BACK) {
+        mn_close();
+        return;
+    }
+    if (mn_pos == MI_LANG) {                      /* a click switches it (saved with Save) */
+        ui_lang ^= 1u;
+        bk.lang = ui_lang;
+        i = mn_pos;
+        mn_open();
+        mn_pos = (uint8_t)i;
+        for (i = 0; i < MI_N; i++)
+            mn_row(i);
+        return;
+    }
+    if (!mn_edit) {
+        mn_edit = 1;
+        mn_val = mn_current(mn_pos);
+        mn_row(mn_pos);
+        return;
+    }
+    mn_edit = 0;                                  /* confirmed: the bank / a capture now */
+    if (mn_pos == MI_BANK && (uint32_t)mn_val != bk.bank) {
+        bk_go((uint32_t)mn_val, 0);
+        for (i = 0; i < MI_N; i++)
+            mn_row(i);
+    } else if (mn_pos == MI_CAPA || mn_pos == MI_CAPB) {
+        uint32_t side = mn_pos - MI_CAPA;
+        bk.b[bk.bank].cap[side] = mn_val < 0 ? (uint8_t)MS_NONE : ms_list[mn_val];
+        if (side == bk.ab)
+            bk_go(bk.bank, side);
+    }
+    mn_row(mn_pos);
+}
+
+/* the panel, every 5 ms: debounced buttons (pressed in two scans); ladder = the PC10 reading */
+static void ui_buttons(uint32_t din, int32_t ladder)
+{
+    static uint32_t prev, deb, t_sel, sel_long, t_left, left_done;
+    uint32_t now = now_ms(), was = deb, press, rel, i;
+    if (ladder >= 0 && ladder < 661)              /* the DLY / REV / CAB ladder (docs/06) -> bits 9..11 */
+        din |= 1u << 11;
+    else if (ladder >= 661 && ladder < 746)
+        din |= 1u << 9;
+    else if (ladder >= 746 && ladder < 905)
+        din |= 1u << 10;
+    deb = (din & prev) | (deb & (din | prev));
+    prev = din;
+    press = deb & ~was;
+    rel = was & ~deb;
+    if (press & BTN_INFO) {
+        if (ui_screen == UI_MAIN)
+            ui_info_open();
+        else
+            mn_close();
+        return;
+    }
+    /* footswitches and banks work on every screen (the player keeps playing) */
+    if (press & BTN_FS_L) {
+        t_left = now;
+        left_done = 0;
+        if (au_umute) {                           /* muted: a press un-mutes */
+            au_umute = 0;
+            left_done = 1;
+            ui_draw(0);
+        }
+    }
+    if ((deb & BTN_FS_L) && !left_done && now - t_left >= UI_MUTE_MS) {
+        left_done = 1;                            /* held: mute */
+        au_umute = 1;
+        ui_draw(0);
+    }
+    if ((rel & BTN_FS_L) && !left_done) {         /* a tap: the effect on / off */
+        ui_bypass ^= 1u;
+        nam_on = nam_ok && c1_ok && !ui_bypass;
+        ui_draw(0);
+    }
+    if (press & BTN_FS_R) {
+        bk_go(bk.bank, bk.ab ^ 1u);
+        if (ui_screen == UI_MENU)
+            mn_open();
+    }
+    for (i = 0; i < BK_N; i++)
+        if ((press & BTN_BANK[i]) && i != bk.bank) {
+            bk_go(i, 0);
+            if (ui_screen == UI_MENU)
+                mn_open();
+            break;
+        }
+    if (press & BTN_SEL) {
+        t_sel = now;
+        sel_long = 0;
+    }
+    if ((deb & BTN_SEL) && !sel_long && now - t_sel >= UI_HOLD_MS && ui_screen == UI_MAIN) {
+        sel_long = 1;                             /* held on the player: save */
+        bk_save_reboot();
+    }
+    if ((rel & BTN_SEL) && !sel_long) {           /* released: a click */
+        if (ui_screen == UI_MAIN)
+            mn_open();
+        else if (ui_screen == UI_MENU)
+            mn_click();
+    }
+    if (ui_msg && now - ui_msg_ms >= UI_MSG_MS) {
+        ui_msg = 0;
+        ui_draw(0);
+    }
+    if (ui_screen == UI_MAIN && bat_shown != (uint8_t)(bat_pct | bat_5v << 7))
+        ui_battery();
+}
+
+/* PARA's quadrature, every loop: 4 transitions per detent */
+static void ui_encoder(uint32_t din)
+{
+    static const int8_t T[16] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
+    static uint32_t st;
+    static int32_t acc;
+    uint32_t s = (din >> ENC_A & 1u) << 1 | (din >> ENC_B & 1u);
+    acc += T[st << 2 | s];
+    st = s;
+    if (acc >= 4 || acc <= -4) {
+        int32_t d = acc > 0 ? 1 : -1;
+        acc = 0;
+        if (ui_screen == UI_MENU)
+            mn_turn(d);
+    }
 }
 
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
@@ -2595,7 +3502,7 @@ static void jb_main(void)
     hex(line + 12, bootguard.boots, 4);
     hex(line + 22, bootguard.rescues, 2);
     status(line, C_TEXT);
-    delay_poll(2000);
+    delay_poll(400);                              /* v0.15: 2 s -> 0.4 s (the boot is part of a capture save) */
     status(JB_NAME " " JB_VERSION, C_TEXT);
 
     rescue_ok = flash_ok && (rescue_staged() || rescue_stage() == 0);   /* 3. the rescue loader */
@@ -2608,17 +3515,19 @@ static void jb_main(void)
     }
 
     inputs_init();
-    delay_poll(1500);                             /* the splash, a moment */
-    test_screen();
-    text_at(8, 4, "NAM: carregando...", C_HOT, C_BG);
-    if (flash_ok) {                               /* v0.14: the saved capture, else the built-in one (prewarm: ~6300 samples) */
-        uint32_t want;
+    if (flash_ok) {                               /* v0.15: the saved capture, else the first one; none: the dry signal */
         ms_scan();
-        want = ms_set_read();
-        if (want >= MS_SLOTS || ms_use(want))
-            ms_use(MS_BUILTIN);
+        ms_list_build();
+        if (!bk_read())                           /* v0.16: the banks (none saved: the captures in order) */
+            bk_defaults();
+        bk_saved = bk;
+        ui_lang = bk.lang;
+        if (bk_slot() != MS_NONE)
+            ms_use(bk_slot());                    /* (an error: the dry signal) */
+        bk_gains();
+        ms_xip_init();
     } else
-        ms_use(MS_BUILTIN);
+        bk_defaults();
     /* Two cores need a higher core supply on this board: at the default SYSVDD 1.26 V a busy core 1 makes the
      * chip misbehave (v0.10.x: hangs, brown-out-like resets, USB / audio DMA stalls); 1.32 V (SYSVDD_VOL_SEL 13,
      * P3_ANA_CON9 bits 3..0; the SDK's own range goes to 1.38 V) ran every JB5 load clean. */
@@ -2628,11 +3537,13 @@ static void jb_main(void)
     led_on = 1;
     audio_start();
     nam_start();                                  /* v0.13.17: NAM on at boot again (stable since VDC14 = 1.50 V) */
+    ui_draw(1);                                   /* v0.15: the player screen */
+    ui_dirty = 1;                                 /* (the volume bar and the CLIP labels on the first scan) */
     STAGE(9);
     {
-    uint32_t din = 0, din_old = 0, first = 1, t_scan = 0, t_meter = 0, t_led = 0, t_cpu = 0, i, adc_i = 0, adc_busy = 0;
-    int32_t led_pos = 0, led_dir = 1;
-    int32_t a[N_AIN] = {0}, a_old[N_AIN] = {0};
+    uint32_t din = 0, first = 1, t_scan = 0, t_bat = 0, t_meter = 0, t_led = 0, t_cpu = 0, i, adc_i = 0, adc_busy = 0;
+    int32_t a[N_AIN] = {-1, -1, -1}, a_old[N_AIN] = {-1, -1, -1};   /* v0.17: -1 = no reading yet (0 on the
+                                                   * PC10 ladder read as CAB held: bank 6 at every boot) */
     for (;;) {
         uint32_t now = now_ms(), st;
         crumb.ms = now;
@@ -2688,18 +3599,18 @@ static void jb_main(void)
         st = usb.up && usb.config && !usb.suspended ? 2u : 1u;   /* suspended: bus idle, the cable is out */
         if (st != shown) {
             shown = st;
-            status(st == 2u ? "USB OK" : "sem USB", st == 2u ? C_OK : C_DIM);
+            ui_usb = st == 2u;
+            if (ui_screen == UI_MAIN)
+                ui_draw(0);
+            else
+                ui_info();
         }
         if (nam_dbg_marks)
             jb_stage(94);
         loop_at = 5;
-        if (now - t_cpu >= 500u && !(quiet & 2u)) {                /* NAM time per 128-frame block (2902 us available) */
-            static char cl[24];
+        if (now - t_cpu >= 500u && !(quiet & 2u)) {                /* the info screen (NAM time per block) */
             t_cpu = now;
-            str_cpy(cl, "CPU NAM ....us max ....", sizeof cl);
-            dec4(cl + 8, (int32_t)nam_us);
-            dec4(cl + 19, (int32_t)nam_us_max);
-            text_at(8, 160, cl, C_TEXT, C_BG);
+            ui_info();
         }
         loop_at = 6;
         if (snap_ready) {
@@ -2709,17 +3620,17 @@ static void jb_main(void)
         if (now - t_led >= 120u && !(quiet & 5u)) {                /* LED ping-pong: a lit ball with a fading trail */
             uint32_t k;
             t_led = now;
-            for (k = 0; k < 8u; k++)
-                led_bri[k] = (uint8_t)(led_bri[k] * 10u / 16u);
-            led_bri[led_pos] = 16;
-            if (led_pos + led_dir < 0 || led_pos + led_dir > 7)
-                led_dir = -led_dir;
-            led_pos += led_dir;
+            if (led_test_on && (int32_t)(now - led_test_until) >= 0)
+                led_test_on = 0;
+            for (k = 0; k < 8u; k++)              /* v0.16: the running bank's LED (mapping: BANK_LED) */
+                led_bri[k] = led_test_on ? (led_test >> k & 1u ? 16u : 0u) : 0u;
+            if (!led_test_on)
+                led_bri[BANK_LED[bk.bank]] = au_umute ? (uint8_t)(now / 240u & 1u ? 16u : 0u) : ui_bypass ? 3u : 16u;
         }
         if (nam_dbg_marks)
             jb_stage(95);
         loop_at = 7;
-        if (now - t_meter >= 60u && !(quiet & 2u)) {               /* IN / OUT meters, CLIP held 1 s */
+        if (now - t_meter >= 60u && !(quiet & 2u) && ui_screen == UI_MAIN) {   /* IN / OUT meters, CLIP held 1 s */
             static uint32_t clip_until[2], ev_seen[2];
             static uint8_t clip_shown[2];
             uint32_t ch, w, ev[2];
@@ -2742,15 +3653,16 @@ static void jb_main(void)
                 if (w > 136u)
                     w = 136u;
                 if (w)
-                    lcd_fill(56, 184u + ch * 16u, w, 8, clip ? C_ERR : lv >= 15u ? C_WARN : C_OK);
+                    lcd_fill(56, UI_MY + 6u + ch * 22u, w, 8, clip ? C_ERR : lv >= 15u ? C_WARN : C_OK);
                 if (w < 136u)
-                    lcd_fill(56u + w, 184u + ch * 16u, 136u - w, 8, RGB(40, 40, 46));
-                if (clip != clip_shown[ch]) {
+                    lcd_fill(56u + w, UI_MY + 6u + ch * 22u, 136u - w, 8, C_BAR);
+                if (clip != clip_shown[ch] || ui_dirty) {
                     clip_shown[ch] = (uint8_t)clip;
-                    text_at(196, 180u + ch * 16u, "CLIP", clip ? C_ERR : C_BG, C_BG);
+                    aa_text(198, UI_MY + ch * 22u, 34, clip ? "CLIP" : "", &FS, C_ERR, C_BG, 0);
                 }
             }
         }
+        ui_encoder(din_read());                   /* v0.15: PARA's quadrature, every loop (4 steps per detent) */
         loop_at = 8;
         if (now - t_scan >= 5u) {                 /* inputs every 5 ms, ADC every 15 ms */
             uint32_t changed = 0;
@@ -2762,6 +3674,10 @@ static void jb_main(void)
                     changed = 1;
                 adc_i = (adc_i + 1u) % N_AIN;
             }
+            if (now - t_bat >= 1000u) {           /* v0.17: the battery (PC9) once a second */
+                t_bat = now;
+                bat_update(a[2]);
+            }
             adc_start(AIN[adc_i][2]);
             adc_busy = 1;
             loop_at = 10;                         /* (10: after the ADC) */
@@ -2771,26 +3687,16 @@ static void jb_main(void)
                 uint32_t v = (uint32_t)a[0];
                 au_gain = v * v * 65536u / (1023u * 1023u);
             }
-            if (((din & ~din_old) & (1u << 4)) && nam_ok && c1_ok) {   /* MOD: NAM on / off (A/B) */
-                nam_on ^= 1u;
-                text_at(8, 4, "                             ", C_HOT, C_BG);
-                text_at(8, 4, nam_on ? nam_label : "NAM: OFF (direto)", C_HOT, C_BG);
-            }
-            if ((din & ~din_old) & (1u << 2)) {   /* FX pressed: next routing */
-                static const char *const RT[] = {"SAIDA: ESTEREO", "SAIDA: L -> L+R", "SAIDA: R -> L+R"};
-                au_route = (uint8_t)((au_route + 1u) % 3u);
-                text_at(8, 4, "                             ", C_HOT, C_BG);
-                text_at(8, 4, RT[au_route], C_HOT, C_BG);
-            }
             loop_at = 9;
-            if (first || changed || din != din_old) {
-                test_draw(din, din_old, a, a_old, first);
-                test_send(din, a);
-                din_old = din;
+            ui_buttons(din, a[1]);                /* v0.16: banks, footswitches, the menu (a[1]: the PC10 ladder) */
+            if (first || changed || ui_dirty) {
+                if (first || ui_dirty || a[0] - a_old[0] > 6 || a_old[0] - a[0] > 6)
+                    ui_vol(a[0]);
                 for (i = 0; i < N_AIN; i++)
                     a_old[i] = a[i];
                 first = 0;
             }
+            ui_dirty = 0;
         }
     }
     }

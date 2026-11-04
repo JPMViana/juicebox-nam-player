@@ -77,7 +77,7 @@ def read_model(path, title=None):
     meta = m.get("metadata", {}) or {}
     loud = meta.get("loudness")
     norm = 10 ** ((-18.0 - float(loud)) / 20.0) if isinstance(loud, (int, float)) else 1.0
-    title = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in (title or Path(path).stem))[:22].upper()
+    title = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in (title or Path(path).stem))[:23]
     return w, m.get("sample_rate", 48000), norm, title, meta
 
 
