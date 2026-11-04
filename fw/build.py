@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Build Juice-Box: app.bin and an installable BlackBox package (.fwsc).
 
-  fw/build.py [--product BlackBox_901] [--bump-cfg]
+  fw/build.py [--product BlackBox_901] [--bump-cfg] [--release]
+
+--release also writes build/fw/release/: juicebox-<version>-app.bin with the official update loader's bytes
+(the rescue copy built in, vendor bytes) zeroed, and a manifest the installer uses to put them back from the
+stock V20 package it downloads. Nothing of the vendor's is in the release files.
 
 Needs: Docker, the JieLi toolchain in .toolchain/toolchain (scripts/pi32cc.sh),
 the stock package unpacked in analysis/v20_pkg (tools/bbpkg.py unpack: its head,
@@ -9,6 +13,8 @@ cfg and the official update loader go into our package and our rescue copy).
 Outputs in build/fw/: juicebox.elf / .dis / .map-like symbol list, app.bin, juicebox-<product>.fwsc.
 """
 import argparse
+import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -40,10 +46,39 @@ def rel(p):
     return Path(p).resolve().relative_to(ROOT)
 
 
+STOCK_SHA256 = "c0fef191b860d3b20f77fc492a24986eef2d12df44bb5e38355684820e26cb08"   # BlackBox_FACTORY_V20.fwsc
+
+
+def release(img, used, product, symv, syms):
+    """app.bin without the official loader body (RESCUE_LDR) + the manifest to rebuild it"""
+    src = (FW / "src" / "juicebox.c").read_text()
+    version = re.search(r'#define JB_VERSION "([^"]+)"', src)[1]
+    gen = (OUT / "gen" / "loader.h").read_text()
+    ldr_len = int(re.search(r"#define RESCUE_LDR_LEN (0x[0-9A-F]+)u", gen)[1], 16)
+    ldr_crc = int(re.search(r"#define RESCUE_LDR_DCRC (0x[0-9A-F]+)u", gen)[1], 16)
+    off = symv("RESCUE_LDR") - APP_XIP
+    body = (PKG / "ota.bin").read_bytes()[0x20:0x20 + ldr_len]
+    if bytes(img[off:off + ldr_len]) != body:
+        raise SystemExit("build: RESCUE_LDR in app.bin is not the stock loader body")
+    rel = bytearray(img)
+    rel[off:off + ldr_len] = bytes(ldr_len)
+    d = OUT / "release"
+    d.mkdir(parents=True, exist_ok=True)
+    name = f"juicebox-{version}-app.bin"
+    (d / name).write_bytes(rel)
+    man = dict(format=1, firmware="Juice-Box", version=version, product=product, app=name,
+               app_sha256=hashlib.sha256(rel).hexdigest(), app_used=used,
+               stock_sha256=STOCK_SHA256,
+               loader=dict(offset=off, length=ldr_len, crc16=ldr_crc, source="ota.bin", source_offset=0x20))
+    (d / f"juicebox-{version}.json").write_text(json.dumps(man, indent=1) + "\n")
+    print(f"release -> {d}: {name} (loader zeroed at {off:#x}, {ldr_len} B)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--product", default="BlackBox_904")
     ap.add_argument("--bump-cfg", action="store_true", help="see tools/bbpkg.py")
+    ap.add_argument("--release", action="store_true", help="the distributable app.bin + manifest (no vendor bytes)")
     a = ap.parse_args()
     if not (PKG / "manifest.json").exists():
         raise SystemExit("analysis/v20_pkg missing: python3 -I tools/bbpkg.py unpack firmware/stock/BlackBox_FACTORY_V20.fwsc analysis/v20_pkg")
@@ -103,6 +138,9 @@ def main():
     rt = (OUT / "ramtext.bin").stat().st_size if (OUT / "ramtext.bin").exists() else 0
     print(f"app: {used} B used of {APP_SLOT} ({used * 100 // APP_SLOT} %), .ram_text {rt} B, "
           f"bss end {symv('_bss_end'):#x}")
+
+    if a.release:
+        release(img, used, a.product, symv, syms)
 
     pkg = OUT / f"juicebox-{a.product}.fwsc"
     cmd = [sys.executable, "-I", ROOT / "tools" / "bbpkg.py", "build", PKG, pkg, "--app", app, "--product", a.product]
