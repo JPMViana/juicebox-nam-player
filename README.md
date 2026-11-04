@@ -67,6 +67,7 @@ Technical documentation:
 | [06 – Stock firmware analysis](docs/06-stock-firmware-analysis.md) | display, audio codec, panel controls |
 | [07 – Firmware history](docs/07-firmware-history.md) | every version, measurements, the dual-core story |
 | [08 – Installer](docs/08-installer.md) | installer architecture, releases, open bugs |
+| [09 – Onyx analysis](docs/09-onyx-analysis.md) | the Pocket AMP firmware: hardware accelerator, NAM and IR |
 | [References](docs/references.md) | prior art and sources |
 
 ## Repository layout

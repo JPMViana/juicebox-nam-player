@@ -63,5 +63,7 @@ vendor's ANN engine, the official editor. Audio chain:
 - [ ] Test the PHONES output
 
 ## Phase 7 – IR (after the first distributable version)
+- [ ] Run the A2-Lite convolutions on the chip's matrix accelerator (`0x01EE0400`, as Onyx and the stock firmware do,
+  [09](09-onyx-analysis.md)) to free CPU for an IR
 - [ ] Load IRs from the installer. May run **without NAM at the same time** (IR-only mode), since NAM already uses
   ~2700 of 2902 µs per block

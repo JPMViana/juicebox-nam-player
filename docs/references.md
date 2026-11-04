@@ -4,6 +4,7 @@
 - [entitymar/annblackbox-custom-firmware-installer](https://github.com/entitymar/annblackbox-custom-firmware-installer) – custom `.fwsc` installer + stock V20 (the installer downloads V20 from here)
 - [entitymar/MVAVE-ANNBLACKBOX-FIRMWARE-UPDATE-SOFTWARE-decompiled](https://github.com/entitymar/MVAVE-ANNBLACKBOX-FIRMWARE-UPDATE-SOFTWARE-decompiled) – decompiled official updater
 - [lucidsoup/BlackboxFX](https://github.com/lucidsoup/BlackboxFX) – custom BlackBox firmware (empty repository as of 2026-10-22)
+- [28spawn/m-vave-pocket-amp-onyx](https://github.com/28spawn/m-vave-pocket-amp-onyx) – Onyx, custom firmware for the M-VAVE Pocket AMP (same SoC): NAM A2-Lite on the hardware accelerator, cabinet IR, effects ([09](09-onyx-analysis.md))
 - [AL-255/FM-1-RE](https://github.com/AL-255/FM-1-RE) – full RE of the M-VAVE FM-1 (AC791N, pi32v2, OTA, Ghidra)
 
 ## Open firmware on the same platform (installed over USB only)
