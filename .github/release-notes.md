@@ -17,4 +17,12 @@ You can go back to the official M-VAVE firmware at any time from the app (Firmwa
 
 ## What's new
 
-- (edit before publishing)
+First public test release.
+
+- NAM A2-Lite captures in real time, split across the pedal's two cores
+- 8 captures over USB, 6 banks (FX…CAB) with A/B and their own IN/OUT levels
+- Footswitches: right = A/B, left = bypass (tap) / mute (hold)
+- On-screen UI in English and Portuguese
+- Installer app for macOS and Windows: install, captures, banks, restore the official firmware
+
+Known issues: the progress bar can sit at 99 % for a while before finishing; Windows is untested; the PHONES output is untested.
