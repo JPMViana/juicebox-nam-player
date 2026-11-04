@@ -60,7 +60,7 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
 - [x] Conversor `.nam` (A2) → pesos A2-Lite (`tools/nam2c.py`, com normalização de loudness), embutido pelo
   `fw/build.py --model` (v0.13.22)
 - [x] Cliente de carregamento: upload de capturas `.nam` via USB sem recompilar (`tools/jb_models.py`)
-- [ ] Escolha de captura pelos botões do pedal
+- [x] Escolha de captura no pedal (v0.15–v0.17): bancos FX..CAB com A/B, menu do PARA, troca ao vivo
 - [ ] Modo "power amp": saída sem cab/IR, nível de linha ajustável, noise gate antes do NAM
 
 ## Fase 6 – Distribuição e código aberto (decisão 2026-11-03)
@@ -72,7 +72,8 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
   V20 oficial, carregar capturas `.nam`. O V20 é baixado do fabricante e o pacote é montado na
   máquina do usuário (o `.fwsc` contém partes do fabricante e não é distribuído pronto)
 - [ ] VID:PID próprio no pid.codes (hoje `1209:0001`, PID de teste)
-- [ ] Interface na tela focada em usabilidade
+- [x] Interface na tela (v0.17), inglês e português
+- [ ] Calibrar a bateria, achar o pino de status do carregador, mapear os LEDs (docs/07)
 
 ## Fase 7 – IR (depois da primeira versão distribuível)
 - [ ] Carregar IRs pelo instalador. Pode funcionar **sem o NAM ao mesmo tempo** (modo só-IR),

@@ -4,6 +4,29 @@ Nome: **Juice-Box**, por **João Viana** (até a v0.1.2: armaria-nam). Identidad
 (o modelo continua `BlackBox` para manter compatibilidade com o updater oficial e
 com `tools/bb_install.py`).
 
+## v0.15 – v0.17 (2026-11-03/04) — interface no visor, bancos, bilíngue
+
+| Versão | Pacote | O que mudou | Verificado |
+|---|---|---|---|
+| v0.15.0 | `_978` | **Troca de captura ao vivo**: a região de capturas vira uma janela XIP sem criptografia (como o `fl_plain_window_init` do Felucca, a partir de `0xA9000`); no boot o firmware compara leituras XIP × driver (`ms_xip_ok`). A troca lê os pesos direto da flash com o núcleo 1 rodando (ocioso): ~0,2 s de silêncio. Fontes suavizadas 4 bpp com acentos (`fonts_aa.h`). Sem captura embutida | `xip_ok = 1`; trocas pelos footswitches funcionaram |
+| v0.15.0 | `_978` | Experimento `z`: religar o núcleo 1 em tempo de execução. Variantes 1 e 2 (limites de escrita desligados): ele não responde em 20 ms; variante 0 (como no boot): não responde **e** derruba o pedal (`DBG_MSG 0x800`) | salvar continua sendo um reinício (~1,5 s) |
+| v0.16.0 | `_979` | **Bancos**: FX, AMP, MOD, DLY, REV, CAB = 6 bancos de 2 capturas (A/B) com IN/OUT por banco (meio dB). Footswitch direito = A↔B; esquerdo = efeito liga/desliga (toque) e mudo (segurar 0,6 s; uma pisada desmuta). PARA: menu do banco; segurar = salvar. Registro de 64 B (`"JBK1"`) em `0xBF000`. Comandos `t`/`u` (tabela), `p` (P33/portas), `l` (LEDs) | controles ok pelo usuário |
+| v0.17.0 | `_980` | Interface **em inglês (padrão) e português** (menu Language/Idioma, salvo no registro). Bateria pelo **PC9** (= metade da tensão, referência 3,3 V assumida). Correção: antes do 1º ADC a escada do PC10 lia 0 = "CAB pressionado" → banco 6 em todo boot | boot no banco 1; bateria mostra 97 % |
+
+### Achados de hardware
+- O carregador **interno** do AC791N está desligado (`P3_CHG_CON0..3 = 0`; leitura P33 conferida com `0x06 = 0x0D`, `0x09 = 0x1D`):
+  o BlackBox carrega a bateria por um **chip carregador separado** (tem LED de carga próprio). Ele funciona com o nosso firmware.
+- Os canais internos de PMU do SARADC (VBG, VBAT/4, LDO5V/4) leem 0 / valor fixo nesta placa: inúteis aqui.
+- PC9 = 645 (no USB, carregado há horas) → 4161 mV pela conta atual; o pedal mostra 97 %.
+
+### Pendências
+- **Calibrar a bateria**: no USB por muito tempo o usuário espera 100 % (mostra 97 %). Medir PC9 só na bateria, carregando e cheia,
+  de preferência com multímetro, e ajustar `BAT_REF_MV` e a curva `MV[]`.
+- **Pino de status do carregador** (para o ícone "carregando"): HOME mostra as entradas `A B C H`; comparar bateria × carregador de tomada × cheio.
+  Hoje o "+" = host USB conectado.
+- **Mapa dos LEDs**: `BANK_LED[]` é chute; mapear com `l` (bit por bit, a tela mostra `LED 0xNN`).
+- Religar o núcleo 1 sem reiniciar (permitiria salvar sem os ~1,5 s).
+
 ## v0.14.0 – v0.14.2 (2026-11-03) — capturas pelo USB, sem recompilar
 
 O pedal guarda **8 capturas** na flash e toca a escolhida no boot. A captura embutida no build
