@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Juice-Box</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="jug" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="6" y="7" width="15" height="20" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+      <rect x="8" y="14" width="11" height="11" rx="2.5" fill="var(--accent)"/>
+      <path d="M21 11c5 0 5 9 0 9" fill="none" stroke="currentColor" stroke-width="2"/>
+      <line x1="15" y1="2" x2="13" y2="12" stroke="var(--ok)" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <div class="name">Juice-Box</div>
+      <div class="tag" data-t="tagline"></div>
+    </div>
+  </div>
+  <div class="lang" role="group" aria-label="Language">
+    <button data-lang="en">EN</button><button data-lang="pt">PT</button>
+  </div>
+</header>
+
+<main>
+  <section class="device" id="device">
+    <div class="dot" id="dot"></div>
+    <div class="device-text">
+      <div class="device-title" id="devTitle"></div>
+      <div class="device-sub" id="devSub"></div>
+    </div>
+    <div class="device-actions" id="devActions"></div>
+  </section>
+
+  <nav class="tabs" id="tabs" hidden>
+    <button data-tab="captures" class="on" data-t="tabCaptures"></button>
+    <button data-tab="banks" data-t="tabBanks"></button>
+    <button data-tab="firmware" data-t="tabFirmware"></button>
+  </nav>
+
+  <section class="panel" id="panel-captures" hidden>
+    <div class="panel-head">
+      <div>
+        <h2 data-t="capTitle"></h2>
+        <p class="hint" data-t="capHint"></p>
+      </div>
+      <button class="primary" id="addCaps" data-t="capAdd"></button>
+    </div>
+    <div class="slots" id="slots"></div>
+  </section>
+
+  <section class="panel" id="panel-banks" hidden>
+    <div class="panel-head">
+      <div>
+        <h2 data-t="bankTitle"></h2>
+        <p class="hint" data-t="bankHint"></p>
+      </div>
+      <button class="primary" id="saveBanks" data-t="bankSave" disabled></button>
+    </div>
+    <table class="banks">
+      <thead><tr>
+        <th data-t="bankCol"></th><th>A</th><th>B</th><th>IN (dB)</th><th>OUT (dB)</th>
+      </tr></thead>
+      <tbody id="bankRows"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="panel-firmware" hidden>
+    <div class="card">
+      <h3 data-t="fwJuice"></h3>
+      <p class="hint" id="fwJuiceText"></p>
+      <button class="primary" id="fwInstall"></button>
+    </div>
+    <div class="card danger">
+      <h3 data-t="fwStock"></h3>
+      <p class="hint" data-t="fwStockText"></p>
+      <button class="ghost" id="fwRevert" data-t="fwRevert"></button>
+    </div>
+  </section>
+
+  <section class="welcome" id="welcome">
+    <ol>
+      <li data-t="step1"></li>
+      <li data-t="step2"></li>
+      <li data-t="step3"></li>
+    </ol>
+    <p class="fine" data-t="disclaimer"></p>
+  </section>
+</main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="mTitle"></h3>
+    <div class="mBody" id="mBody"></div>
+    <div class="bar" id="mBarWrap" hidden><div id="mBar"></div></div>
+    <p class="warn" id="mWarn" hidden data-t="dontUnplug"></p>
+    <div class="mActions" id="mActions"></div>
+  </div>
+</div>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

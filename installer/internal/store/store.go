@@ -206,6 +206,12 @@ func (c *Client) Put(slot int, image []byte, progress func(pct int)) error {
 	return err
 }
 
+// Erase empties a slot (the NAM pauses; Resume reboots back to playing).
+func (c *Client) Erase(slot int) error {
+	_, err := c.call(10*time.Second, 1, 'e', byte(slot))
+	return err
+}
+
 // Select puts slot on the running bank position and saves; the pedal reboots.
 func (c *Client) Select(slot int) error {
 	_, err := c.call(15*time.Second, 1, 's', byte(slot))

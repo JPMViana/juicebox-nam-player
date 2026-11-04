@@ -31,3 +31,10 @@ analysis/logs/*.bin
 
 # instruções locais do assistente
 CLAUDE.md
+
+# installer (Wails): its build/ holds the icons and platform files, kept; the output and generated code are not
+!installer/build/
+installer/build/bin/
+installer/frontend/wailsjs/
+installer/assets/release/*
+!installer/assets/release/.keep

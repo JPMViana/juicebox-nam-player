@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Juice-Box",
+  "outputfilename": "Juice-Box",
+  "frontend:install": "",
+  "frontend:build": "",
+  "wailsjsdir": "./frontend/wailsjs",
+  "author": {
+    "name": "João Viana",
+    "email": "contato@joaopedromarques.com.br"
+  },
+  "info": {
+    "companyName": "João Viana",
+    "productName": "Juice-Box",
+    "productVersion": "0.1.0",
+    "copyright": "GPL-3.0",
+    "comments": "Juice-Box installer for the M-VAVE ANN BlackBox (unofficial)"
+  }
+}
