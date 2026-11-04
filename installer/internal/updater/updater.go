@@ -42,7 +42,7 @@ type Delays struct {
 
 var Default = Delays{Start: 2 * time.Second, Reply: 10 * time.Millisecond, Loader: 3 * time.Second,
 	Reboot: 3 * time.Second, Retry: time.Second, Poll: time.Second, HS: time.Second, IdleCheck: 8 * time.Second,
-	IdleWrite: 180 * time.Second, WaitLoader: 30 * time.Second, WaitReboot: 40 * time.Second}
+	IdleWrite: 180 * time.Second, WaitLoader: 90 * time.Second, WaitReboot: 60 * time.Second}
 
 // Error codes, for the UI's messages.
 type Code int
@@ -160,9 +160,16 @@ type Updater struct {
 	BE   midiio.Backend
 	Port string // part of a port name, "" = by name pattern
 	D    Delays
+	Log  func(format string, a ...any) // diagnostics (nil: none)
 }
 
 func New(be midiio.Backend) *Updater { return &Updater{BE: be, D: Default} }
+
+func (u *Updater) logf(f string, a ...any) {
+	if u.Log != nil {
+		u.Log(f, a...)
+	}
+}
 
 func (u *Updater) handshake(l midiio.Link, tries int) (Identity, bool) {
 	l.Drain()
@@ -208,16 +215,22 @@ func (u *Updater) Find(want func(Identity) bool) *Dev { return u.find(want, true
 
 func (u *Updater) find(want func(Identity) bool, onlyPort bool) *Dev {
 	outs := u.BE.Outputs()
-	for _, name := range u.candidates(onlyPort) {
+	cands := u.candidates(onlyPort)
+	u.logf("find: inputs %q outputs %q candidates %q", u.BE.Inputs(), outs, cands)
+	for _, name := range cands {
 		out := midiio.PairOutput(name, outs)
 		if out == "" {
+			u.logf("find: %q has no output port", name)
 			continue
 		}
 		l, err := u.BE.Open(name, out)
 		if err != nil {
+			u.logf("find: open %q: %v", name, err)
 			continue
 		}
-		if id, ok := u.handshake(l, 2); ok && (want == nil || want(id)) {
+		id, ok := u.handshake(l, 2)
+		u.logf("find: %q handshake ok=%v identity=%q loader=%v", name, ok, id.Text, id.Loader())
+		if ok && (want == nil || want(id)) {
 			return &Dev{l, id}
 		}
 		l.Close()
@@ -282,6 +295,7 @@ func (u *Updater) check(dev *Dev, image []byte, step Step) (*Dev, error) {
 	time.Sleep(u.D.Start)
 	served, finished, lost, err := u.serve(dev.Link, image, finishCheck, u.D.IdleCheck, func(k, _ int) { step("check", "", k) })
 	dev.Link.Close()
+	u.logf("step 1: served %d, finished %v, lost %v, err %v", served, finished, lost, err)
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +330,7 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 		step("write", "", p)
 	})
 	ota.Link.Close()
+	u.logf("step 2: served %d, finished %v, lost %v, err %v", served, finished, lost, err)
 	if err != nil {
 		return err
 	}
@@ -350,6 +365,7 @@ func (u *Updater) Install(dev *Dev, logical []byte, product string, step Step) (
 	if step == nil {
 		step = func(string, string, int) {}
 	}
+	u.logf("install %s on %s (%d bytes)", product, dev.ID.Text, len(logical))
 	if dev.ID.Text != "ota-?" && ModelOf(dev.ID.Text) != ModelOf(product) {
 		dev.Link.Close()
 		return "", &Error{ErrModel, fmt.Sprintf("the device is %s, the package is for %s", dev.ID.Text, product)}
@@ -361,6 +377,7 @@ func (u *Updater) Install(dev *Dev, logical []byte, product string, step Step) (
 			// the stock firmware may drop the link, or skip its last answer, while it switches to update mode:
 			// whatever step 1 reported, a loader that shows up means the write can go on
 			var ue *Error
+			u.logf("step 1 failed: %v", err)
 			if !errors.As(err, &ue) || (ue.Code != ErrLost && ue.Code != ErrStopped) {
 				return "", err
 			}

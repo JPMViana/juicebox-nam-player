@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -41,6 +42,7 @@ func NewApp() *App { return &App{} }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.logf("---- Juice-Box installer started")
 	if be, err := midiio.NewRT(); err == nil {
 		a.be = be
 	}
@@ -102,7 +104,39 @@ type Status struct {
 	Product  string `json:"product"` // its identity
 }
 
-func (a *App) updater() *updater.Updater { return updater.New(a.be) }
+func (a *App) updater() *updater.Updater {
+	u := updater.New(a.be)
+	u.Log = a.logf
+	return u
+}
+
+// LogPath is the diagnostics file (Help: send it when reporting a problem).
+func LogPath() string {
+	d, err := os.UserCacheDir()
+	if err != nil {
+		d = os.TempDir()
+	}
+	return filepath.Join(d, "Juice-Box", "installer.log")
+}
+
+var logMu sync.Mutex
+
+// logf appends a timestamped line; the file is cut back when it grows past 1 MB.
+func (a *App) logf(f string, args ...any) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	p := LogPath()
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	if st, err := os.Stat(p); err == nil && st.Size() > 1<<20 {
+		os.Rename(p, p+".old")
+	}
+	fh, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer fh.Close()
+	fmt.Fprintf(fh, "%s %s\n", time.Now().Format("2006-01-02 15:04:05.000"), fmt.Sprintf(f, args...))
+}
 
 func classify(id updater.Identity) string {
 	switch {
@@ -132,17 +166,27 @@ func (a *App) Status() Status {
 		return st
 	}
 	defer a.mu.Unlock()
-	d := a.updater().Find(nil)
+	u := updater.New(a.be) // (quiet: not logged every 2.5 s)
+	d := u.Find(nil)
 	if d == nil {
 		st.State = "none"
-		return st
+	} else {
+		d.Link.Close()
+		st.State, st.Identity, st.Version = classify(d.ID), d.ID.Text, d.ID.Version
 	}
-	d.Link.Close()
-	st.State, st.Identity, st.Version = classify(d.ID), d.ID.Text, d.ID.Version
+	if st.State+st.Identity != lastState {
+		lastState = st.State + st.Identity
+		a.logf("status: %s %s (MIDI inputs %q)", st.State, st.Identity, a.be.Inputs())
+	}
 	return st
 }
 
+var lastState string
+
 func (a *App) progress(step, arg string, n int) {
+	if step != "check" && step != "write" && step != "capture" || n == 0 || n == 100 {
+		a.logf("progress %s %s %d", step, arg, n)
+	}
 	wruntime.EventsEmit(a.ctx, "progress", map[string]any{"step": step, "arg": arg, "n": n})
 }
 
@@ -163,9 +207,11 @@ func (a *App) install(raw []byte) error {
 	up := a.updater()
 	d := up.Find(nil)
 	if d == nil {
+		a.logf("install: pedal not found")
 		return fmt.Errorf("E%d: pedal not found", updater.ErrNotFound)
 	}
 	_, err = up.Install(d, jlpkg.LogicalImage(raw), product, a.progress)
+	a.logf("install result: %v", err)
 	return uiErr(err)
 }
 
