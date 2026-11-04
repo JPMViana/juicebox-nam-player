@@ -72,6 +72,15 @@ motor ANN do fabricante, editor oficial. Cadeia de áudio:
   V20 oficial, carregar capturas `.nam`. O V20 é baixado do fabricante e o pacote é montado na
   máquina do usuário (o `.fwsc` contém partes do fabricante e não é distribuído pronto)
 - [ ] VID:PID próprio no pid.codes (hoje `1209:0001`, PID de teste)
+- [ ] **Backlog — documentação do usuário (EN + PT-BR)**: como baixar, abrir e usar o instalador no Windows e no
+  macOS **sem assinatura paga** (decisão 2026-11-04: sem a conta Apple Developer de US$ 99/ano nem certificado
+  Windows). Cobrir: macOS (Gatekeeper: botão direito → Abrir, ou Ajustes → Privacidade e Segurança → "Abrir
+  mesmo assim"; `xattr -dr com.apple.quarantine Juice-Box.app` como alternativa), Windows (SmartScreen: "Mais
+  informações" → "Executar assim mesmo"; WebView2 já vem no Windows 10/11), cabo USB de dados, fechar o editor
+  da M-VAVE, o que fazer se a instalação for interrompida (modo de atualização), voltar ao oficial, checksums
+  publicados no release para conferir o download
+- [ ] Builds de release por GitHub Actions (macOS universal + Windows), checksums SHA-256 no release
+- [ ] Ícone próprio do instalador
 - [x] Interface na tela (v0.17), inglês e português
 - [ ] Calibrar a bateria, achar o pino de status do carregador, mapear os LEDs (docs/07)
 

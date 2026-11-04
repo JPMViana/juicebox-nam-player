@@ -10,6 +10,7 @@ package updater
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -235,8 +236,9 @@ func (u *Updater) waitFor(want func(Identity) bool, d time.Duration) *Dev {
 	return nil
 }
 
-// serve answers read requests until the device asks for finish.
-func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served, end int)) (served int, finished, lost bool, err error) {
+// serve answers read requests until the device asks for finish; prog gets the requests and the bytes served so far.
+func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served, bytes int)) (served int, finished, lost bool, err error) {
+	sent := 0
 	last := time.Now()
 	for {
 		p := l.Read(u.D.Poll)
@@ -269,7 +271,8 @@ func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Du
 			return served, false, true, nil
 		}
 		served++
-		prog(served, int(addr)+n)
+		sent += n
+		prog(served, sent)
 	}
 }
 
@@ -303,8 +306,10 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 	step("write", "", 0)
 	ota.Link.Send(upgrade)
 	time.Sleep(u.D.Start)
-	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_, end int) {
-		p := end * 100 / len(image)
+	// the loader reads the package from its end backwards (and skips what is already on the flash): the
+	// progress is the bytes served so far, which only grows
+	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_, sent int) {
+		p := sent * 100 / len(image)
 		if p > 99 {
 			p = 99
 		}
@@ -353,7 +358,16 @@ func (u *Updater) Install(dev *Dev, logical []byte, product string, step Step) (
 	if !dev.ID.Loader() {
 		var err error
 		if ota, err = u.check(dev, logical, step); err != nil {
-			return "", err
+			// the stock firmware may drop the link, or skip its last answer, while it switches to update mode:
+			// whatever step 1 reported, a loader that shows up means the write can go on
+			var ue *Error
+			if !errors.As(err, &ue) || (ue.Code != ErrLost && ue.Code != ErrStopped) {
+				return "", err
+			}
+			step("loader", "", 0)
+			if ota = u.waitFor(func(i Identity) bool { return i.Loader() }, u.D.WaitLoader); ota == nil {
+				return "", err
+			}
 		}
 	}
 	if err := u.write(ota, logical, step); err != nil {

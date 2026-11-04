@@ -93,5 +93,7 @@ input[type=number] { width: 88px; font-variant-numeric: tabular-nums; }
 .mBody td.e { color: var(--err); }
 .bar { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 6px 0 10px; }
 .bar div { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+.risk { background: #2a1f12; border: 1px solid #4a3418; border-radius: 8px; padding: 10px 12px; color: #e9d9c2; font-size: 13px; }
+.mBody p { margin: 0 0 10px; }
 .warn { color: var(--warn); font-size: 13px; margin: 0 0 6px; }
 .mActions { display: flex; gap: 8px; justify-content: flex-end; }

@@ -18,7 +18,8 @@ type fakePedal struct {
 	next    int
 	stage   int // 0 running, 1 loader, 2 done
 	product string
-	bad     int // bytes that differed from the package
+	bad     int  // bytes that differed from the package
+	abrupt  bool // step 1 ends by switching to the loader, no finish request (as the stock firmware may)
 	q       [][]byte
 }
 
@@ -44,6 +45,10 @@ func reqPkt(addr uint32, n int) []byte {
 
 func (p *fakePedal) request() {
 	step := 200
+	if p.stage == 0 && p.next >= 2000 && p.abrupt {
+		p.stage, p.ident, p.port = 1, "ota-BlackBox_980", "Jieli loader"
+		return
+	}
 	if p.stage == 0 && p.next >= 2000 || p.next >= len(p.image) { // step 1 reads a part only
 		fin := uint32(finishCheck)
 		if p.stage == 1 {
@@ -164,4 +169,23 @@ func joinSteps(s []string) string {
 		out += x
 	}
 	return out
+}
+
+func TestInstallAbruptStep1(t *testing.T) {
+	img := make([]byte, 5000)
+	p := &fakePedal{ident: "BlackBox_020", port: "USB Composite Device", image: img, product: "BlackBox_980", abrupt: true}
+	u := &Updater{BE: &fakeBE{p}, D: fast()}
+	dev := u.Find(nil)
+	var last int
+	got, err := u.Install(dev, img, "BlackBox_980", func(s, _ string, n int) {
+		if s == "write" {
+			if n < last {
+				t.Fatalf("write progress went back: %d after %d", n, last)
+			}
+			last = n
+		}
+	})
+	if err != nil || got != "BlackBox_980" || last != 100 {
+		t.Fatalf("%q %v last=%d", got, err, last)
+	}
 }

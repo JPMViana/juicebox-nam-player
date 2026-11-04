@@ -59,22 +59,27 @@ function showError(e) {
   modal({ title: t("errTitle"), body: errText(e), actions: [{ label: t("close"), primary: true, run: closeModal }] });
 }
 
-// run a long operation with the progress dialog
-async function run(title, fn) {
+// run a long operation with the progress dialog; onError may handle a failure itself (true)
+async function run(title, fn, onError) {
   busy = true;
   modal({ title, body: t("pStart"), progress: true, warn: true });
+  let failed = null;
   try {
     await fn();
     closeModal();
   } catch (e) {
-    showError(e);
-  } finally {
-    busy = false;
-    caps = null;
-    status = null;          /* the pedal restarted: look again, reload its captures */
-    renderStatus();
-    setTimeout(poll, 1500);
+    failed = e;
   }
+  if (failed) {
+    closeModal();
+    busy = false;
+    if (!(onError && (await onError(failed)))) showError(failed);
+  }
+  busy = false;
+  caps = null;
+  status = null;            /* the pedal restarted: look again, reload its captures */
+  renderStatus();
+  setTimeout(poll, 1500);
 }
 const STEP = { download: "pDownload", wipe: "pWipe", start: "pStart", check: "pCheck", loader: "pLoader",
   write: "pWrite", reboot: "pReboot", done: "pDone", capture: "pCapture" };
@@ -145,8 +150,24 @@ async function poll() {
 
 async function doInstall() {
   const rel = status.release;
-  if (!(await ask(t("confirmInstallTitle", { rel }), t("confirmInstall"), t("install", { rel })))) return;
-  await run(t("installTitle"), () => api().InstallJuiceBox());
+  const body = el("div", {}, el("p", {}, t("confirmInstall")),
+    el("p", { class: "risk" }, el("strong", {}, t("riskTitle") + ": "), t("risk")));
+  if (!(await ask(t("confirmInstallTitle", { rel }), body, t("riskAccept")))) return;
+  await run(t("installTitle"), () => api().InstallJuiceBox(), offerFinish);
+}
+
+// after a failed install: if the pedal is in update mode, offer to finish right there
+async function offerFinish(e) {
+  let s = null;
+  for (let i = 0; i < 6 && !(s && s.state === "loader"); i++) {
+    try { s = await api().Status(); } catch (x) {}
+    if (!s || s.state !== "loader") await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (!s || s.state !== "loader") return false;
+  if (await ask(t("loaderTitle"), t("finishNow"), t("finish"))) {
+    await run(t("installTitle"), () => api().InstallJuiceBox());
+  }
+  return true;
 }
 async function doRevert() {
   if (!(await ask(t("confirmRevertTitle"), t("confirmRevert"), t("fwRevert").replace("…", "")))) return;
@@ -253,14 +274,27 @@ $("#saveBanks").addEventListener("click", async () => {
   await run(t("capsTitle"), () => api().SaveBanks(caps.banks));
 });
 
+// the first run: English or Brazilian Portuguese
+function chooseLang() {
+  return new Promise((res) => {
+    const pick = (l) => () => { lang = l; api().SetLang(l); applyLang(); closeModal(); res(); };
+    modal({ title: "Language · Idioma", body: el("div", {},
+      el("p", {}, I18N.en.langAsk), el("p", {}, I18N.pt.langAsk)), actions: [
+      { label: "Português (Brasil)", run: pick("pt") },
+      { label: "English", primary: true, run: pick("en") },
+    ] });
+  });
+}
+
 // -------------------------------------------------------------------- start
 (async function start() {
   for (let i = 0; i < 50 && !window.go; i++) await new Promise((r) => setTimeout(r, 100));
   if (window.runtime) window.runtime.EventsOn("progress", onProgress);
   let saved = "";
   try { saved = await api().Lang(); } catch (e) {}
-  lang = saved || ((navigator.language || "").toLowerCase().startsWith("pt") ? "pt" : "en");
+  lang = saved || "en";                      /* English is the default */
   applyLang();
+  if (!saved) await chooseLang();            /* first run: ask */
   poll();
   setInterval(poll, 2500);
 })();
