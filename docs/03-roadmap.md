@@ -58,7 +58,7 @@ vendor's ANN engine, the official editor. Audio chain:
 - [ ] **First public test**: macOS and Windows testers
 - [ ] Fix the window staying at 99 % before finishing ([08](08-installer.md))
 - [ ] Own VID:PID at pid.codes (today `1209:0001`, a test PID)
-- [ ] Own installer icon
+- [x] Own installer icon (the splash screen's juice jug, `installer/scripts/gen_icon.py`)
 - [ ] Battery calibration, charger status pin, LED map ([07](07-firmware-history.md))
 - [ ] Test the PHONES output
 

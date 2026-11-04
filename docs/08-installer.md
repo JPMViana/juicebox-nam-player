@@ -88,5 +88,5 @@ go build -o ../build/jbx ./cmd/jbx                                # CLI
 ## Distribution to-do
 
 - Fix the bug above; test on Windows.
-- Own installer icon; own USB VID:PID (pid.codes).
+- Own USB VID:PID (pid.codes).
 - Official source for V20.
