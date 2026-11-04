@@ -251,26 +251,36 @@ func (u *Updater) waitFor(want func(Identity) bool, d time.Duration) *Dev {
 
 // serve answers read requests until the device asks for finish; prog gets the requests and the bytes served so far.
 func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served, bytes int)) (served int, finished, lost bool, err error) {
-	sent := 0
-	last := time.Now()
+	sent, same := 0, 0
+	var prevAddr uint32 = 0xFFFFFFFF
+	prevN := -1
+	last := time.Now() // the last valid request: other traffic must not hold the loop forever
 	for {
+		if time.Since(last) > idle {
+			return served, false, false, nil
+		}
 		p := l.Read(u.D.Poll)
 		if p == nil {
 			if l.Lost() {
 				return served, false, true, nil
 			}
-			if time.Since(last) > idle {
-				return served, false, false, nil
-			}
 			continue
 		}
 		fl, addr, n, ok := parseRequest(p)
 		if !ok {
-			u.logf("serve: not a request: % x", p[:min(len(p), 24)])
+			u.logf("serve: not a request (%d B): % x", len(p), p[:min(len(p), 32)])
 			continue
 		}
 		u.logf("serve: req fl=%d addr=%#x n=%d (pkt %d B)", fl, addr, n, len(p))
 		last = time.Now()
+		if addr == prevAddr && n == prevN {
+			if same++; same >= 30 { // the device keeps rejecting our answer: stop instead of looping
+				return served, false, false, &Error{ErrStopped, fmt.Sprintf("the pedal keeps asking for %#x+%d", addr, n)}
+			}
+		} else {
+			same = 0
+		}
+		prevAddr, prevN = addr, n
 		if addr == finishCheck || addr == finishWrite {
 			l.Send(response(addr, []byte("success\x00"), 0))
 			if addr == finish {
