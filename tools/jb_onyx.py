@@ -18,6 +18,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--blocks", type=int, default=200)
 ap.add_argument("--no-asm", action="store_true", help="the CPU stage in C, not Onyx's assembly (diagnostic)")
 ap.add_argument("--accel-sw", action="store_true", help="every accelerator job in its software model (diagnostic)")
+ap.add_argument("--settle", type=int, default=0, help="spin N x 16 nops after the accelerator reports READY (diagnostic, 0..63)")
 ap.add_argument("--irq-off", action="store_true", help="interrupts masked around every block (diagnostic)")
 a = ap.parse_args()
 names = [x for x in mido.get_input_names() if "armaria" in x or "Juice" in x]
@@ -51,8 +52,8 @@ print(f"load: rc {rc:#x}, block engine ready {ok}, low SRAM self-test {low}, ass
 if rc or not ok:
     raise SystemExit("the engine did not load (rc 0xfffffff1 = no capture slot active)")
 
-if a.no_asm or a.irq_off or a.accel_sw:
-    ask(b"\x7DJBO\x03" + bytes([(0 if a.no_asm else 1) | (2 if a.accel_sw else 0), 1 if a.irq_off else 0]), lambda g: g[:6] == b"\xF0\x7DJBO\x03")
+if a.no_asm or a.irq_off or a.accel_sw or a.settle:
+    ask(b"\x7DJBO\x03" + bytes([(0 if a.no_asm else 1) | (2 if a.accel_sw else 0), (1 if a.irq_off else 0) | (min(a.settle, 63) << 1)]), lambda g: g[:6] == b"\xF0\x7DJBO\x03")
     print(f"options: assembly stage {'off' if a.no_asm else 'on'}, accelerator {'software' if a.accel_sw else 'hardware'}, "
           f"interrupts {'off' if a.irq_off else 'on'} during blocks")
 

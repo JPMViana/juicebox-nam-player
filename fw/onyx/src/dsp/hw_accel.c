@@ -184,6 +184,7 @@ void pa_hw_accel_force_sw(int on) {
     (void)on;
 }
 
+volatile uint32_t jb_ready_delay;                 /* Juice-Box: see pa_hw_accel_wait_lean */
 /* LEAN protocol for the WaveNet block engine (140 jobs a block): only the register protocol, as the stock's driver does - no timer reads (peripheral reads
  * are slow), no breadcrumbs, no statistics; the wait is bounded by a spin count, not by the timer. The standard submit/wait cost about 1 us a job. */
 #define PA_HW_LEAN_SPINS 60000u         /* about 3 ms of polling: a 731 us job takes under 9,000 */
@@ -201,6 +202,9 @@ void pa_hw_accel_wait_lean(void) {
         }
     }
     reg[0] |= PA_HW_VEC_STATUS_ACK;
+    for (uint32_t d = jb_ready_delay; d; d--)       /* Juice-Box: a settling time after READY (diagnostic, set by JBO 3) */
+        __asm__ volatile("nop" ::: "memory");
+    (void)reg[0];
     __asm__ volatile("csync" ::: "memory");       /* Juice-Box: the results are read only after this */
     g_hw_busy = 0u;
 #endif
