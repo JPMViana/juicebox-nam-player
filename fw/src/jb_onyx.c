@@ -137,3 +137,17 @@ void onyx_state(uint32_t *c)
     c[46] = h;
 }
 
+/* core 1 (JBO 5): one block of the test input per job; core 0 makes the input and waits (fw/src/juicebox.c). The engine's state is
+ * reset by onyx_c1_start; the output of the last block stays in onyx_c1_y. */
+static float onyx_c1_x[PA_WN_BLK_N], onyx_c1_y[PA_WN_BLK_N];
+void onyx_c1_start(void) { pa_wavenet_reset(om); in_t = 0; in_seed = 12345u; }
+void onyx_c1_next_input(void) { make_input(onyx_c1_x, PA_WN_BLK_N); }
+float *onyx_c1_out(void) { return onyx_c1_y; }
+int onyx_ready_c1(void) { return om && om->blk_ok; }
+void onyx_c1_block(uint32_t unused)
+{
+    (void)unused;
+    wn_block_run(om, onyx_c1_x, onyx_c1_y, PA_WN_BLK_N);
+    __asm__ volatile("csync" ::: "memory");
+}
+

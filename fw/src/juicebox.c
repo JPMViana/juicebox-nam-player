@@ -2812,6 +2812,9 @@ extern void onyx_prepare(void *mem, uint32_t size, const float *w, uint32_t n, u
 extern void onyx_run(uint32_t blocks, uint32_t *r, float *last, void (*between)(void));
 extern void onyx_options(uint32_t asm_on, uint32_t irq_off);
 extern void onyx_state(uint32_t *c);
+extern void onyx_c1_start(void), onyx_c1_next_input(void), onyx_c1_block(uint32_t);
+extern float *onyx_c1_out(void);
+extern int onyx_ready_c1(void);
 static uint8_t onyx_ready;
 
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
@@ -3491,6 +3494,42 @@ static void debug_service(void)                   /* our SysEx; anything else st
             k = 6u + ota_pack7((const uint8_t *)r, 28, msg + 6);
             msg[k++] = 0xF7;
             ota_wire_send(msg, k);
+        } else if (p[4] == 5u && n == 7u) {      /* JBO 5 b0 b1: the same run with every block on CORE 1; reply as JBO 1 */
+            const uint32_t blocks = (uint32_t)p[5] | (uint32_t)p[6] << 7;
+            uint32_t b, mn = 0xFFFFFFFFu, mx = 0, sum = 0, late = 0;
+            for (k = 0; k < 8u; k++) r[k] = 0;
+            if (onyx_ready && c1_ok) {
+                CX2(0x34Cu) = 0;                  /* core 1's write limits off: it writes the accelerator, the low SRAM, the driver's state */
+                onyx_c1_start();
+                for (b = 0; b < (blocks > 2000u ? 2000u : blocks); b++) {
+                    uint32_t t0, t, w0;
+                    onyx_c1_next_input();
+                    t0 = fm1_ticks();
+                    if (!fm1_cpu1_run(onyx_c1_block, b))
+                        break;
+                    w0 = t0;
+                    while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 20000u * FM1_TICKS_PER_US)
+                        FM1_C1_SYNC();
+                    t = fm1_ticks() - t0;
+                    if (fm1_c1_mb.done != fm1_c1_mb.job) { late++; break; }
+                    if (t < mn) mn = t;
+                    if (t > mx) mx = t;
+                    sum += t;
+                    poll();
+                }
+                r[0] = b; r[1] = mn; r[2] = b ? sum / b : 0; r[3] = mx; r[5] = late;
+                for (i = 0; i < 64u; i++) last[i] = onyx_c1_out()[i];
+            }
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 1;
+            k = 6u + ota_pack7((const uint8_t *)r, 32, msg + 6);
+            msg[k++] = 0xF7;
+            ota_wire_send(msg, k);
+            for (i = 0; i < 4u; i++) {
+                msg[5] = 2; msg[6] = (uint8_t)i;
+                k = 7u + ota_pack7((const uint8_t *)(last + 16u * i), 64, msg + 7);
+                msg[k++] = 0xF7;
+                ota_wire_send(msg, k);
+            }
         } else if (p[4] == 4u && onyx_ready) {   /* JBO 4: the engine's state (47 words) as O 4 i pack7(48 B), i = 0..3 */
             static uint32_t c[48];
             onyx_state(c);

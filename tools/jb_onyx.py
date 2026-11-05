@@ -21,6 +21,7 @@ ap.add_argument("--accel-sw", action="store_true", help="every accelerator job i
 ap.add_argument("--settle", type=int, default=0, help="spin N x 16 nops after the accelerator reports READY (diagnostic, 0..63)")
 ap.add_argument("--verify", action="store_true", help="the pedal recomputes every accelerator job on its CPU and logs the first wrong one (tools/jb_verify.py)")
 ap.add_argument("--no-readback", action="store_true", help="skip reading back the job's last result word after READY (diagnostic)")
+ap.add_argument("--core1", action="store_true", help="run every block on core 1 (core 0 makes the input and waits)")
 ap.add_argument("--irq-off", action="store_true", help="interrupts masked around every block (diagnostic)")
 a = ap.parse_args()
 names = [x for x in mido.get_input_names() if "armaria" in x or "Juice" in x]
@@ -69,7 +70,7 @@ if len(wbytes) != 1871 * 4:
     raise SystemExit(f"read {len(wbytes)} B of the weights, expected {1871 * 4}")
 
 nb = a.blocks
-rr = ask(b"\x7DJBO\x01" + bytes([nb & 0x7F, nb >> 7 & 0x7F]), lambda g: g[:6] in (b"\xF0\x7DJBO\x01", b"\xF0\x7DJBO\x02"),
+rr = ask(b"\x7DJBO" + (b"\x05" if a.core1 else b"\x01") + bytes([nb & 0x7F, nb >> 7 & 0x7F]), lambda g: g[:6] in (b"\xF0\x7DJBO\x01", b"\xF0\x7DJBO\x02"),
          timeout=10 + nb * 0.01, count=5)
 st4 = ask(b"\x7DJBO\x04", lambda g: g[:6] == b"\xF0\x7DJBO\x04", count=4)
 inp.close(); out.close()
