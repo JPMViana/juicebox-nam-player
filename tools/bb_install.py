@@ -30,6 +30,8 @@ import hashlib
 import queue
 import re
 import sys
+import os
+TRACE = os.environ.get("JB_TRACE") == "1"
 import time
 
 HS_QUERY = bytes([0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7])
@@ -306,8 +308,17 @@ class Updater:
                 continue
             r = parse_request(pkt)
             if not r:
+                # the idle limit counts valid requests only: other traffic (seen: a loader that kept sending
+                # something else) must not hold the loop forever
+                self.other = getattr(self, "other", 0) + 1
+                if self.other <= 3:
+                    print(f"\n  (not a request: {bytes(pkt[:16]).hex(' ')})", file=sys.stderr)
+                if time.monotonic() - last > idle:
+                    return served, False, False
                 continue
             fl, addr, n = r
+            if TRACE:
+                print(f"\n  req fl={fl} addr={addr:#x} n={n}", file=sys.stderr)
             last = time.monotonic()
             if addr in (FINISH_CHECK, FINISH_WRITE):
                 link.send(response(addr, b"success\0"))

@@ -38,3 +38,6 @@ installer/build/bin/
 installer/frontend/wailsjs/
 # installer/assets/release/ is tracked: the firmware release the installer embeds (our code only; the vendor
 # loader region is zeroed and rebuilt on the user's machine from the downloaded V20)
+
+# local Claude Code settings
+.claude/settings.local.json
