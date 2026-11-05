@@ -2073,7 +2073,9 @@ static uint32_t bat_mv, bat_pct;
 static uint8_t bat_5v, bat_shown = 0xFFu;
 static void bat_update(int32_t pc9)
 {
-    static const uint16_t MV[] = {3300, 3550, 3680, 3750, 3820, 3900, 3990, 4080, 4180};
+    /* v0.18: the top point 4180 -> 4150 mV: a full battery read 4161 mV here (the 3.3 V reference is assumed, not measured)
+     * and showed 97 %. To redo with a multimeter (docs/07, battery calibration) */
+    static const uint16_t MV[] = {3300, 3550, 3680, 3750, 3820, 3900, 3990, 4070, 4150};
     uint32_t mv, i;
     if (pc9 < 0)
         return;
