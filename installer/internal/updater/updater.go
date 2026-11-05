@@ -338,15 +338,17 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 	// from its end backwards to the start. Summing the bytes served passed 100 % early (the bar sat at 99 % for the whole
 	// write). The progress is how far down the backward sweep is; the head reads are skipped; it only grows.
 	// A package identical to what the pedal runs (seen on the pedal, 2026-11-05): the loader re-reads the head and the cfg
-	// (0, 0x200, 0x400, 0x4400, 0xa47e0, 0xa4800) over and over and writes nothing; it never asks for the end. Fifteen reads of
-	// offset 0 before any backward sweep = that loop: stop and say so.
+	// (0, 0x200, 0x400, 0x4400, 0xa47e0, 0xa4800) over and over and writes nothing; it never asks for the end.
+	// Step 2 is NEVER cut on a heuristic: on 2026-11-05 a detector for that loop (5, then 15 reads of offset 0) cut a real
+	// write at its start and left the single-bank app erased (no USB in any mode). Same-version installs are refused
+	// before step 1 instead; here the loop is only logged.
 	top, low, pct, zeros := -1, -1, 0, 0
 	n := len(image)
 	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_ int, addr uint32) bool {
 		end := int(addr) // the request's start: the sweep's position
 		if addr == 0 {
-			if zeros++; zeros >= 15 && pct < 2 {
-				return false
+			if zeros++; zeros == 50 && pct < 2 {
+				u.logf("step 2: 50 reads of offset 0 and no sweep yet (identical package?); still serving")
 			}
 		}
 		if top < 0 {

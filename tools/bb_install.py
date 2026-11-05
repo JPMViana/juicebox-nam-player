@@ -363,10 +363,14 @@ class Updater:
         sw = {"top": None, "low": None, "pct": 0, "zeros": 0}
 
         def prog(k, end):
-            if end <= 512:                          # offset 0 read again and again = the identical-package loop
+            # never stop serving the loader on a heuristic: on 2026-11-05 an "identical-package loop" detector cut a
+            # real write at its start and left the single-bank app erased (no USB in any mode). Same-version installs
+            # are refused before step 1; here only a note is printed and the user decides.
+            if end <= 512:
                 sw["zeros"] += 1
-                if sw["zeros"] >= 15 and sw["pct"] < 2:
-                    raise SameFirmware()
+                if sw["zeros"] == 50 and sw["pct"] < 2:
+                    print("\n  note: the loader keeps re-reading the start of the package. If this goes on for minutes,"
+                          " the pedal may already run this firmware. Do NOT unplug while it is writing.", file=sys.stderr)
             if sw["top"] is None:
                 if end > len(image) // 2:
                     sw["top"] = sw["low"] = end
@@ -376,12 +380,7 @@ class Updater:
             sw["low"] = min(sw["low"], end)
             sw["pct"] = max(sw["pct"], min(99, (sw["top"] - sw["low"]) * 100 // sw["top"]))
             step("write", sw["pct"])
-        try:
-            served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"], prog)
-        except SameFirmware:
-            ota.link.close()
-            raise InstallError("same", "the pedal already runs this firmware: nothing was written "
-                                       "(if it stays in update mode, turn it off and on)")
+        served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"], prog)
         ota.link.close()
         if not finished:
             raise InstallError("lost" if lost else "stopped",
@@ -434,10 +433,6 @@ def not_found(up):
     where = f"no MIDI port matching {up.port!r} answered" if up.port else "BlackBox not found"
     return InstallError("notfound", f"{where} (USB data cable? another app using it?)"
                         f"\n  MIDI inputs: {', '.join(names) if names else '(none)'}")
-
-
-class SameFirmware(Exception):
-    """the loader keeps re-reading the head: the package is identical to the installed firmware"""
 
 
 class Progress:
