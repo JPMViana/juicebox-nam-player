@@ -73,6 +73,9 @@ Isso só é necessário uma vez.
 
 Suas capturas e bancos continuam no pedal quando você atualizar o Juice-Box depois com um app mais novo.
 
+**Atualizações.** A partir da v0.18 o app avisa quando sai uma versão nova: clique em **Baixar**, abra o app novo e clique em
+**Atualizar** no pedal. (Os apps v0.17 não avisam: pegue o mais novo na [página de releases](https://github.com/JPMViana/juicebox-nam-player/releases).)
+
 ## 4. Capturas
 
 O Juice-Box toca capturas **NAM A2** (o arquivo "A2" completo ou "A2-Lite"). Ele roda a parte A2-Lite do modelo, a

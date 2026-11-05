@@ -94,6 +94,9 @@ const I18N = {
     ENOTA2: "not a NAM A2 / A2-Lite capture",
     EFIXED: "too loud for the pedal's math",
     EBADNAM: "not a valid .nam file",
+    auTitle: "Juice-Box {latest} is available",
+    auSub: "You have {current}. Download the new installer and open it to update the pedal; your captures and banks are kept.",
+    auGet: "Download",
   },
   pt: {
     tagline: "Firmware player de NAM para o M-VAVE ANN BlackBox",
@@ -189,5 +192,8 @@ const I18N = {
     ENOTA2: "não é uma captura NAM A2 / A2-Lite",
     EFIXED: "alta demais para a matemática do pedal",
     EBADNAM: "não é um arquivo .nam válido",
+    auTitle: "Juice-Box {latest} disponível",
+    auSub: "Você tem a {current}. Baixe o novo instalador e abra-o para atualizar o pedal; suas capturas e bancos são mantidos.",
+    auGet: "Baixar",
   },
 };

@@ -19,6 +19,7 @@ import (
 	"juicebox/installer/internal/jlpkg"
 	"juicebox/installer/internal/midiio"
 	"juicebox/installer/internal/nam"
+	"juicebox/installer/internal/selfupdate"
 	"juicebox/installer/internal/stock"
 	"juicebox/installer/internal/store"
 	"juicebox/installer/internal/updater"
@@ -39,6 +40,32 @@ type App struct {
 }
 
 func NewApp() *App { return &App{} }
+
+// --------------------------------------------------------------- app update ---
+
+// CheckAppUpdate asks GitHub whether a newer installer (with a newer Juice-Box) has been released. Offline or on any error it
+// reports nothing new; the window shows a banner when Available.
+func (a *App) CheckAppUpdate() selfupdate.Info {
+	cur := ""
+	if a.man != nil {
+		cur = a.man.Version
+	}
+	in, err := selfupdate.Check(a.ctx, cur)
+	if err != nil {
+		a.logf("update check: %v", err)
+		return selfupdate.Info{Current: cur}
+	}
+	a.logf("update check: current %s, latest %s, newer %v", in.Current, in.Latest, in.Available)
+	return in
+}
+
+// OpenReleasePage opens a page of the project's GitHub releases in the browser (nothing else may be opened from the window).
+func (a *App) OpenReleasePage(url string) {
+	if !strings.HasPrefix(url, "https://github.com/"+selfupdate.Repo+"/releases") {
+		url = "https://github.com/" + selfupdate.Repo + "/releases/latest"
+	}
+	wruntime.BrowserOpenURL(a.ctx, url)
+}
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx

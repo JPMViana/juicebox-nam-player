@@ -26,6 +26,7 @@ function applyLang() {
   document.querySelectorAll(".lang button").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
   renderStatus();
   renderCaps();
+  renderAppUpdate();
 }
 document.querySelectorAll(".lang button").forEach((b) =>
   b.addEventListener("click", () => { lang = b.dataset.lang; api().SetLang(lang); applyLang(); }));
@@ -286,6 +287,23 @@ function chooseLang() {
   });
 }
 
+// ------------------------------------------------------- a newer installer
+let appUpdate = null;
+function renderAppUpdate() {
+  const box = $("#appUpdate");
+  if (!appUpdate || !appUpdate.available) { box.hidden = true; return; }
+  const vars = { latest: appUpdate.latest, current: appUpdate.current || "?" };
+  $("#auTitle").textContent = t("auTitle", vars);
+  $("#auSub").textContent = t("auSub", vars);
+  $("#auGet").textContent = t("auGet");
+  $("#auGet").onclick = () => api().OpenReleasePage(appUpdate.url);
+  box.hidden = false;
+}
+async function checkAppUpdate() {
+  try { appUpdate = await api().CheckAppUpdate(); } catch (e) { appUpdate = null; }
+  renderAppUpdate();
+}
+
 // -------------------------------------------------------------------- start
 (async function start() {
   for (let i = 0; i < 50 && !window.go; i++) await new Promise((r) => setTimeout(r, 100));
@@ -297,4 +315,6 @@ function chooseLang() {
   if (!saved) await chooseLang();            /* first run: ask */
   poll();
   setInterval(poll, 2500);
+  checkAppUpdate();
+  setInterval(checkAppUpdate, 6 * 3600 * 1000);   /* a window left open checks again every 6 hours */
 })();

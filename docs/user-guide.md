@@ -72,6 +72,9 @@ You only need to do this once.
 
 Your captures and banks are kept when you update Juice-Box later with a newer app.
 
+**Updates.** From v0.18 the app tells you when a newer version is released: click **Download**, open the new app and click
+**Update** on the pedal. (v0.17 apps cannot tell you: get the newest one from the [releases page](https://github.com/JPMViana/juicebox-nam-player/releases).)
+
 ## 4. Captures
 
 Juice-Box plays **NAM A2** captures (the full "A2" file or "A2-Lite"). It runs the A2-Lite part of the model, the

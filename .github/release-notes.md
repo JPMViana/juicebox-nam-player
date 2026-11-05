@@ -17,12 +17,16 @@ You can go back to the official M-VAVE firmware at any time from the app (Firmwa
 
 ## What's new
 
-First public test release.
+- **New NAM engine**: the capture now runs on the chip's matrix accelerator (engine from the open-source
+  [Onyx](https://github.com/28spawn/m-vave-pocket-amp-onyx) firmware by @28spawn), on one core instead of two. Same model, same
+  sound; it frees a whole core for the cabinet IR that comes next
+- **Bypass at the right level**: the left footswitch's dry signal no longer follows the MASTER knob (it was far quieter than the
+  guitar plugged straight in)
+- **Level meters in dBFS**: silence reads as empty, -60 dBFS to 0 dBFS
+- **Battery** shows 100 % when full
+- **Installer**: tells you when a newer version is released; the progress bar no longer sits at 99 %
 
-- NAM A2-Lite captures in real time, split across the pedal's two cores
-- 8 captures over USB, 6 banks (FX…CAB) with A/B and their own IN/OUT levels
-- Footswitches: right = A/B, left = bypass (tap) / mute (hold)
-- On-screen UI in English and Portuguese
-- Installer app for macOS and Windows: install, captures, banks, restore the official firmware
+Updating from v0.17: download this installer, open it and click **Update** — your captures and banks are kept.
+Installers older than this one cannot tell you about updates: check the [releases page](https://github.com/JPMViana/juicebox-nam-player/releases) now and then.
 
-Known issues: the progress bar can sit at 99 % for a while before finishing; Windows is untested; the PHONES output is untested.
+Known issues: Windows is lightly tested; the PHONES output is untested.

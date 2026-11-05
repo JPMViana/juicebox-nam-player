@@ -97,3 +97,9 @@ input[type=number] { width: 88px; font-variant-numeric: tabular-nums; }
 .mBody p { margin: 0 0 10px; }
 .warn { color: var(--warn); font-size: 13px; margin: 0 0 6px; }
 .mActions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* a newer installer was released (CheckAppUpdate) */
+.appupdate { display: flex; gap: 16px; align-items: center; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius); padding: 14px 20px; margin-bottom: 16px; }
+.appupdate-text { flex: 1; }
+.appupdate-title { font-weight: 600; }
+.appupdate-sub { color: var(--dim); font-size: 13px; margin-top: 2px; }
