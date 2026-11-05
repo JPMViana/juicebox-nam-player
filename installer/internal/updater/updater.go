@@ -331,19 +331,29 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 	step("write", "", 0)
 	ota.Link.Send(upgrade)
 	time.Sleep(u.D.Start)
-	// the loader reads the head first, then the package from its end backwards to the start (seen on the pedal:
-	// the offset goes 0-2 %, then 96 % down to 0 %). Summing the bytes served overshot 100 % early, so the bar sat
-	// at 99 % for the whole write. The progress is how far down the backward sweep is, and it only grows.
-	sweep, pct := false, 0
+	// the loader's order (seen on the pedal): one read near the end, a few in the head (the first ~4 %), then the package
+	// from its end backwards to the start. Summing the bytes served passed 100 % early (the bar sat at 99 % for the whole
+	// write). The progress is how far down the backward sweep is; the head reads are skipped; it only grows.
+	top, low, pct := -1, -1, 0
+	n := len(image)
 	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_ int, addr uint32) {
-		if int(addr) > len(image)/2 {
-			sweep = true
-		}
-		if !sweep {
+		end := int(addr) // the request's start: the sweep's position
+		if top < 0 {
+			if end > n/2 {
+				top, low = end, end
+			}
 			return
 		}
-		if p := (len(image) - int(addr)) * 100 / len(image); p > pct {
-			pct = min(p, 99)
+		if end*100 <= n*5 && low*100 > n*10 {
+			return
+		}
+		if end < low {
+			low = end
+		}
+		if top > 0 {
+			if p := (top - low) * 100 / top; p > pct {
+				pct = min(p, 99)
+			}
 		}
 		step("write", "", pct)
 	})

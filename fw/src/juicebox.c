@@ -2808,6 +2808,7 @@ static void acc_test(uint32_t t, uint32_t *r)
 /* v0.18.0-dev (JBO): Onyx's A2-Lite block engine on the accelerator, as a test (fw/src/jb_onyx.c, tools/jb_onyx.py) */
 extern void onyx_prepare(void *mem, uint32_t size, const float *w, uint32_t n, uint32_t *r);
 extern void onyx_run(uint32_t blocks, uint32_t *r, float *last, void (*between)(void));
+extern void onyx_options(uint32_t asm_on, uint32_t irq_off);
 static uint8_t onyx_ready;
 
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
@@ -3487,6 +3488,10 @@ static void debug_service(void)                   /* our SysEx; anything else st
             k = 6u + ota_pack7((const uint8_t *)r, 28, msg + 6);
             msg[k++] = 0xF7;
             ota_wire_send(msg, k);
+        } else if (p[4] == 3u && n == 7u) {      /* JBO 3 asm irq_off: diagnostics (reply O 3) */
+            onyx_options(p[5], p[6]);
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 3; msg[6] = 0xF7;
+            ota_wire_send(msg, 7);
         } else if (p[4] == 1u && n == 7u) {
             const uint32_t blocks = (uint32_t)p[5] | (uint32_t)p[6] << 7;
             if (onyx_ready)

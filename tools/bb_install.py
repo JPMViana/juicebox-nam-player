@@ -347,15 +347,20 @@ class Updater:
         step("write", 0)
         ota.link.send(UPGRADE)
         time.sleep(DELAY["start"])
-        # the loader reads the head, then the package from its end backwards: show how far down that sweep is
-        sw = {"on": False, "pct": 0}
+        # the loader's order (seen on the pedal): one read near the end, a few in the head (the first ~4 %), then the
+        # package from its end backwards to the start. Progress = how far down that sweep is; head reads are skipped.
+        sw = {"top": None, "low": None, "pct": 0}
 
         def prog(k, end):
-            if end > len(image) // 2:
-                sw["on"] = True
-            if sw["on"]:
-                sw["pct"] = max(sw["pct"], min(99, (len(image) - end) * 100 // len(image)))
-                step("write", sw["pct"])
+            if sw["top"] is None:
+                if end > len(image) // 2:
+                    sw["top"] = sw["low"] = end
+                return
+            if end * 100 <= len(image) * 5 and sw["low"] * 100 > len(image) * 10:
+                return
+            sw["low"] = min(sw["low"], end)
+            sw["pct"] = max(sw["pct"], min(99, (sw["top"] - sw["low"]) * 100 // sw["top"]))
+            step("write", sw["pct"])
         served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"], prog)
         ota.link.close()
         if not finished:

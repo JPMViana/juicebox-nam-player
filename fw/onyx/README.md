@@ -12,4 +12,6 @@ and `NOTICE.md`). Used here under the GPL-3.0, the licence of this project. Than
 | `src/dsp/hw_accel.c` | `custom-fw/src/dsp/hw_accel.c` | driver and bit-exact software model of the accelerator at `0x01EE0400` |
 | `include/*.h` | `custom-fw/include/` | their headers (`pa_wavenet.h`, `pa_hw_accel.h`, `pa_hw.h`, `pa_plat.h`, `pa_config.h`) |
 
-Analysis: [docs/09-onyx-analysis.md](../../docs/09-onyx-analysis.md). Local changes: none yet.
+Analysis: [docs/09-onyx-analysis.md](../../docs/09-onyx-analysis.md). Local changes:
+- `src/dsp/hw_accel.c`: a log of the last 16 accelerator jobs at SRAM `0x01C7D000` (survives a reset) and
+  `pa_hw_accel_force_sw()` (run every job in the software model), both for diagnostics.

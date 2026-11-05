@@ -20,6 +20,11 @@ uint32_t plat_ticks24(void) { return *(volatile uint32_t *)0x00010804u; }   /* T
 #include "../onyx/src/nam/pa_wavenet.c"
 
 static pa_wavenet_model_t *om;
+static uint8_t om_irq_off;                       /* 1: interrupts off around every block (diagnostic) */
+
+/* diagnostics: asm bit 0 = 0 forces the C version of the CPU stage, bit 1 = every accelerator job in software; irq_off = 1 masks the interrupts around every block */
+extern void pa_hw_accel_force_sw(int on);
+void onyx_options(uint32_t asm_on, uint32_t irq_off) { s_wn_asm = (asm_on & 1u) ? s_wn_asm : 0u; om_irq_off = (uint8_t)irq_off; pa_hw_accel_force_sw((asm_on & 2u) != 0u); }
 
 uint32_t onyx_model_size(void) { return (uint32_t)sizeof(pa_wavenet_model_t); }
 
@@ -57,9 +62,11 @@ void onyx_run(uint32_t blocks, uint32_t *r, float *last, void (*between)(void))
     in_t = 0; in_seed = 12345u;
     for (uint32_t b = 0; b < blocks; b++) {
         make_input(x, PA_WN_BLK_N);
+        if (om_irq_off) __asm__ volatile("cli" ::: "memory");
         const uint32_t t0 = plat_ticks24();
         wn_block_run(om, x, last, PA_WN_BLK_N);
         const uint32_t t = plat_ticks24() - t0;
+        if (om_irq_off) __asm__ volatile("sti" ::: "memory");
         if (t < mn) mn = t;
         if (t > mx) mx = t;
         sum += t;
