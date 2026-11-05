@@ -97,6 +97,11 @@ def main():
     if "(f)" in (OUT / "a2lq.s").read_text():
         sys.exit("nam/a2lq.c: float instructions in core 1's code")
     tc("clang", "-O2", "-fno-builtin", "-mcpu=r3", "-mfprev1", "-c", rel(ROOT / "nam" / "bench_dev.c"), "-o", rel(OUT / "bench_dev.o"))
+    # v0.18: Onyx's A2-Lite block engine (fw/onyx, GPL-3.0-or-later): the glue includes pa_wavenet.c; the driver and the assembly stage
+    onyx = ["-I", rel(FW / "onyx" / "shim"), "-I", rel(FW / "onyx" / "include")]
+    tc("clang", *NAMFLAGS, *onyx, "-Wno-unused-function", "-c", rel(FW / "src" / "jb_onyx.c"), "-o", rel(OUT / "jb_onyx.o"))
+    tc("clang", *NAMFLAGS, *onyx, "-c", rel(FW / "onyx" / "src" / "dsp" / "hw_accel.c"), "-o", rel(OUT / "onyx_hw_accel.o"))
+    tc("clang", *NAMFLAGS, *onyx, "-c", rel(FW / "onyx" / "src" / "nam" / "pa_wavenet_asm.c"), "-o", rel(OUT / "onyx_wn_asm.o"))
     tc("clang", *CFLAGS, *inc, f'-DFELUCCA_ID="{a.product}"', "-c", rel(FW / "src" / "juicebox.c"),
        "-o", rel(OUT / "juicebox.o"))
     tc("clang", "-c", rel(FW / "felucca" / "crt0.S"), "-o", rel(OUT / "crt0.o"))
@@ -104,7 +109,7 @@ def main():
     tc("clang", "-c", rel(FW / "felucca" / "hal" / "fm1_vec.S"), "-o", rel(OUT / "fm1_vec.o"))
     tc("clang", "-c", rel(FW / "src" / "jb_isr.S"), "-o", rel(OUT / "jb_isr.o"))
     elf = OUT / "juicebox.elf"
-    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "fm1_vec.o"), rel(OUT / "jb_isr.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "a2lx.o"), rel(OUT / "a2lq.o"), rel(OUT / "bench_dev.o"), "-o", rel(elf))
+    tc("ld", "-T", rel(FW / "app.ld"), rel(OUT / "crt0.o"), rel(OUT / "fm1_cpu1.o"), rel(OUT / "fm1_vec.o"), rel(OUT / "jb_isr.o"), rel(OUT / "juicebox.o"), rel(OUT / "a2lite.o"), rel(OUT / "a2lx.o"), rel(OUT / "a2lq.o"), rel(OUT / "bench_dev.o"), rel(OUT / "jb_onyx.o"), rel(OUT / "onyx_hw_accel.o"), rel(OUT / "onyx_wn_asm.o"), "-o", rel(elf))
     for sect, name in ((".text", "text.bin"), (".ram_text", "ramtext.bin"), (".c1_text", "c1text.bin"), (".data", "data.bin")):
         (OUT / name).unlink(missing_ok=True)
         tc("common/bin/objcopy", "-O", "binary", "-j", sect, rel(elf), rel(OUT / name))

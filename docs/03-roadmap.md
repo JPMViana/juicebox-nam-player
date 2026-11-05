@@ -64,6 +64,9 @@ vendor's ANN engine, the official editor. Audio chain:
 - [x] Release builds by GitHub Actions (macOS universal + Windows), SHA-256 checksums
 - [ ] **First public test**: macOS and Windows testers
 - [x] Window staying at 99 %: the progress summed the bytes served, but the loader reads backwards (fixed, to confirm in the app)
+- [ ] **Installer update check**: on start, ask the GitHub Releases API for the latest release, compare with the app's
+  version and offer the download (link to the release page + checksum); make sure a newer app can always update the pedal
+  from any older Juice-Box or the stock firmware
 - [ ] Own VID:PID at pid.codes (today `1209:0001`, a test PID)
 - [x] Own installer icon (the splash screen's juice jug, `installer/scripts/gen_icon.py`)
 - [ ] Battery calibration, charger status pin, LED map ([07](07-firmware-history.md))

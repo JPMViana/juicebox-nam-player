@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.17.2"
+#define JB_VERSION "v0.18.0-dev"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -2805,6 +2805,11 @@ static void acc_test(uint32_t t, uint32_t *r)
     r[4] = bad; r[5] = first; r[6] = (uint32_t)got; r[7] = (uint32_t)want;
 }
 
+/* v0.18.0-dev (JBO): Onyx's A2-Lite block engine on the accelerator, as a test (fw/src/jb_onyx.c, tools/jb_onyx.py) */
+extern void onyx_prepare(void *mem, uint32_t size, const float *w, uint32_t n, uint32_t *r);
+extern void onyx_run(uint32_t blocks, uint32_t *r, float *last, void (*between)(void));
+static uint8_t onyx_ready;
+
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
 {
     const uint8_t *p;
@@ -3453,6 +3458,52 @@ static void debug_service(void)                   /* our SysEx; anything else st
         k = 5u + ota_pack7((const uint8_t *)st, 24, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
+    } else if ((n == 5u || n == 7u) && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'O') {
+        /* JBO 0: stop the NAM (for good, until a reboot), load the active capture into Onyx's engine in nam_ring's memory;
+         *        reply O 0 pack7(7 words: rc, blk_ok, blk_low, asm ok, model size, accel broken, weights address)
+         * JBO 1 b0 b1: run b0 | b1 << 7 blocks of 64 on the test input; reply O 1 pack7(6 words: blocks, min, mean, max ticks,
+         *        accel broken, errors), then O 2 i pack7(16 floats) for i = 0..3: the last block's raw output */
+        static uint8_t msg[96];
+        static float last[64];
+        uint32_t r[7], k, i;
+        ota_frame_done();
+        if (p[4] == 0u) {
+            const uint32_t slot = ms_active, w0 = fm1_ticks();
+            au_mute = 1;
+            delay_poll(12);
+            nam_on = 0;
+            nam_ok = 0;                           /* nothing turns the old NAM back on: its ring is about to be reused */
+            while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
+                FM1_C1_SYNC();
+            pipe_busy = 0;
+            au_mute = 0;
+            if (!ms_xip_ok || slot >= MS_SLOTS || !(ms_valid >> slot & 1u)) {
+                r[0] = 0xFFFFFFF1u; r[1] = r[2] = r[3] = r[4] = r[5] = r[6] = 0;
+            } else {
+                onyx_prepare(nam_ring, sizeof nam_ring, (const float *)FL_XIP(MS_BASE + slot * MS_SLOT_LEN + MS_HDR), 1871u, r);
+                onyx_ready = r[0] == 0u && r[1];
+            }
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 0;
+            k = 6u + ota_pack7((const uint8_t *)r, 28, msg + 6);
+            msg[k++] = 0xF7;
+            ota_wire_send(msg, k);
+        } else if (p[4] == 1u && n == 7u) {
+            const uint32_t blocks = (uint32_t)p[5] | (uint32_t)p[6] << 7;
+            if (onyx_ready)
+                onyx_run(blocks > 2000u ? 2000u : blocks, r, last, poll);
+            else
+                r[0] = r[1] = r[2] = r[3] = r[4] = r[5] = 0;
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 1;
+            k = 6u + ota_pack7((const uint8_t *)r, 24, msg + 6);
+            msg[k++] = 0xF7;
+            ota_wire_send(msg, k);
+            for (i = 0; i < 4u; i++) {
+                msg[5] = 2; msg[6] = (uint8_t)i;
+                k = 7u + ota_pack7((const uint8_t *)(last + 16u * i), 64, msg + 7);
+                msg[k++] = 0xF7;
+                ota_wire_send(msg, k);
+            }
+        }
     } else if ((n == 4u || n == 7u) && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'K') {
         static uint8_t msg[16];                   /* v0.17.2: JBK [g0 g1 g2]: the bypass gain (Q16, 21 bits LSB first), reply it */
         uint32_t k, v;
