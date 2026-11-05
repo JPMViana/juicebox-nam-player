@@ -76,3 +76,22 @@ void onyx_run(uint32_t blocks, uint32_t *r, float *last, void (*between)(void))
     r[0] = blocks; r[1] = mn; r[2] = blocks ? sum / blocks : 0; r[3] = mx;
     r[4] = pa_hw_accel_broken(); r[5] = pa_hw_accel_errors();
 }
+
+/* the state after a run, to find where the pedal and the Mac part: per layer, a checksum of its ring (with the mirror) and its
+ * position; then the head history. c[0..22] ring sums, c[23..45] ring_pos, c[46] head_q sum (nam/test/wn_onyx_dev.c: the same) */
+void onyx_state(uint32_t *c)
+{
+    uint32_t col = 0;
+    for (int l = 0; l < PA_WN_NUM_LAYERS; l++) {
+        const uint32_t w = 3u * (wn_R(l) + wn_MIR(l));
+        uint32_t s = 0;
+        for (uint32_t i = 0; i < w; i++) s = s * 31u + (uint32_t)om->ring_q[3u * col + i];
+        c[l] = s;
+        c[23 + l] = om->ring_pos[l];
+        col += wn_R(l) + wn_MIR(l);
+    }
+    uint32_t h = 0;
+    for (uint32_t i = 0; i < 3u * PA_WN_BLK_HEAD_STEPS; i++) h = h * 31u + (uint32_t)om->head_q[i];
+    c[46] = h;
+}
+

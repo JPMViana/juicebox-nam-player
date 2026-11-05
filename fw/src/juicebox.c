@@ -2811,6 +2811,7 @@ static void acc_test(uint32_t t, uint32_t *r)
 extern void onyx_prepare(void *mem, uint32_t size, const float *w, uint32_t n, uint32_t *r);
 extern void onyx_run(uint32_t blocks, uint32_t *r, float *last, void (*between)(void));
 extern void onyx_options(uint32_t asm_on, uint32_t irq_off);
+extern void onyx_state(uint32_t *c);
 static uint8_t onyx_ready;
 
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
@@ -3490,6 +3491,15 @@ static void debug_service(void)                   /* our SysEx; anything else st
             k = 6u + ota_pack7((const uint8_t *)r, 28, msg + 6);
             msg[k++] = 0xF7;
             ota_wire_send(msg, k);
+        } else if (p[4] == 4u && onyx_ready) {   /* JBO 4: the engine's state (47 words) as O 4 i pack7(48 B), i = 0..3 */
+            static uint32_t c[48];
+            onyx_state(c);
+            for (i = 0; i < 4u; i++) {
+                msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 4; msg[6] = (uint8_t)i;
+                k = 7u + ota_pack7((const uint8_t *)(c + 12u * i), 48, msg + 7);
+                msg[k++] = 0xF7;
+                ota_wire_send(msg, k);
+            }
         } else if (p[4] == 3u && n == 7u) {      /* JBO 3 asm irq_off: diagnostics (reply O 3) */
             onyx_options(p[5], p[6]);
             msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 3; msg[6] = 0xF7;

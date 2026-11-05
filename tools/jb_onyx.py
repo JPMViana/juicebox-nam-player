@@ -68,7 +68,12 @@ if len(wbytes) != 1871 * 4:
 nb = a.blocks
 rr = ask(b"\x7DJBO\x01" + bytes([nb & 0x7F, nb >> 7 & 0x7F]), lambda g: g[:6] in (b"\xF0\x7DJBO\x01", b"\xF0\x7DJBO\x02"),
          timeout=10 + nb * 0.01, count=5)
+st4 = ask(b"\x7DJBO\x04", lambda g: g[:6] == b"\xF0\x7DJBO\x04", count=4)
 inp.close(); out.close()
+state = None
+if len(st4) == 4:
+    parts4 = {g[6]: unpack7(g[7:-1])[:48] for g in st4}
+    state = struct.unpack("<48I", b"".join(parts4[i] for i in sorted(parts4)))
 st = [g for g in rr if g[5] == 1]
 if not st:
     raise SystemExit("no answer to the run")
@@ -86,8 +91,17 @@ if not os.path.exists(tool):
 with tempfile.TemporaryDirectory() as d:
     wf, of = os.path.join(d, "w.f32"), os.path.join(d, "y.f32")
     open(wf, "wb").write(wbytes)
-    subprocess.run([tool, wf, str(nb), of], check=True)
+    hs = subprocess.run([tool, wf, str(nb), of], check=True, capture_output=True, text=True).stdout.split("\n")
     host = struct.unpack("<64f", open(of, "rb").read())
+if state:
+    bad = []
+    for l in range(23):
+        hsum, hpos = (int(x) for x in hs[l].split())
+        if state[l] != hsum or state[23 + l] != hpos:
+            bad.append(f"layer {l} (ring {'ok' if state[l] == hsum else 'DIFFERS'}, pos {state[23 + l]} vs {hpos})")
+    if state[46] != int(hs[23]):
+        bad.append("head history DIFFERS")
+    print("state: " + ("identical" if not bad else "; ".join(bad)))
 if dev is None:
     raise SystemExit("the pedal's output did not arrive")
 diff = max(abs(x - y) for x, y in zip(dev, host))
