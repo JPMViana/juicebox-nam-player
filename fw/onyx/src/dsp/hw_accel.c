@@ -171,7 +171,9 @@ static void accel_software(const pa_hw_vec_cmd_t *cmd) {
 #if !defined(PA_HOST_BUILD) && !defined(PA_HOST_SIM)
 #define JB_JOBLOG ((volatile uint32_t *)(uintptr_t)0x01C7D000u)
 static uint32_t jb_jobn;
+volatile uint32_t jb_joblog_on;                    /* Juice-Box: 1 = keep the job log (diagnostic; off in normal use) */
 static inline void jb_joblog(uint32_t config, const void *a, const void *b, void *dst, uint32_t ctrl, uint32_t stride) {
+    if (!jb_joblog_on) return;
     volatile uint32_t *r = JB_JOBLOG + 8u * (jb_jobn & 15u);
     r[0] = jb_jobn++; r[1] = config; r[2] = (uint32_t)(uintptr_t)a; r[3] = (uint32_t)(uintptr_t)b; r[4] = (uint32_t)(uintptr_t)dst;
     r[5] = ctrl; r[6] = stride; r[7] = 0x4A4F4221u;

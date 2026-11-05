@@ -44,7 +44,8 @@ static uint8_t om_irq_off;                       /* 1: interrupts off around eve
 /* diagnostics: asm bit 0 = 0 forces the C version of the CPU stage, bit 1 = every accelerator job in software; irq_off = 1 masks the interrupts around every block */
 extern void pa_hw_accel_force_sw(int on);
 extern volatile uint32_t jb_ready_delay, jb_verify, jb_readback;
-void onyx_options(uint32_t asm_on, uint32_t irq_off) { jb_ready_delay = (irq_off >> 1) * 16u; irq_off &= 1u; s_wn_asm = (asm_on & 1u) ? s_wn_asm : 0u; om_irq_off = (uint8_t)irq_off; pa_hw_accel_force_sw((asm_on & 2u) != 0u); jb_verify = (asm_on & 4u) ? 1u : 0u; jb_readback = (asm_on & 8u) ? 0u : 1u; if (jb_verify) for (int i = 0; i < 16; i++) ((volatile uint32_t *)0x01C7D200u)[i] = 0; }
+extern volatile uint32_t jb_joblog_on;
+void onyx_options(uint32_t asm_on, uint32_t irq_off) { jb_joblog_on = 1u; jb_ready_delay = (irq_off >> 1) * 16u; irq_off &= 1u; s_wn_asm = (asm_on & 1u) ? s_wn_asm : 0u; om_irq_off = (uint8_t)irq_off; pa_hw_accel_force_sw((asm_on & 2u) != 0u); jb_verify = (asm_on & 4u) ? 1u : 0u; jb_readback = (asm_on & 8u) ? 0u : 1u; if (jb_verify) for (int i = 0; i < 16; i++) ((volatile uint32_t *)0x01C7D200u)[i] = 0; }
 
 uint32_t onyx_model_size(void) { return (uint32_t)sizeof(pa_wavenet_model_t); }
 
@@ -148,6 +149,20 @@ void onyx_c1_block(uint32_t unused)
 {
     (void)unused;
     wn_block_run(om, onyx_c1_x, onyx_c1_y, PA_WN_BLK_N);
+    __asm__ volatile("csync" ::: "memory");
+}
+
+/* v0.18: the engine in the audio path. Core 0 fills onyx_au_in[slot] (128 samples, model units), core 1 runs onyx_au_job(slot)
+ * (two 64-sample blocks) into onyx_au_out[slot] (the raw head output; x onyx_head_scale() = the model's output) */
+float onyx_au_in[2][128], onyx_au_out[2][128];
+float onyx_head_scale(void) { return om ? om->head_scale : 0.0f; }
+int onyx_loaded(void) { return om && om->blk_ok && om->active; }
+void onyx_reset(void) { if (om) pa_wavenet_reset(om); }
+void onyx_au_job(uint32_t slot)
+{
+    slot &= 1u;
+    wn_block_run(om, onyx_au_in[slot], onyx_au_out[slot], PA_WN_BLK_N);
+    wn_block_run(om, onyx_au_in[slot] + PA_WN_BLK_N, onyx_au_out[slot] + PA_WN_BLK_N, PA_WN_BLK_N);
     __asm__ volatile("csync" ::: "memory");
 }
 

@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.18.0-dev"
+#define JB_VERSION "v0.18.0"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -98,7 +98,8 @@ static uint32_t now_ms(void)                    /* monotonic; survives the TIMER
 
 static void audio_service(void);
 static void jb_stage(uint32_t n);
-#define VDC14_LEVEL 5u                            /* 1.25 V + 0.05 V x level = 1.50 V (SDK default 3 = 1.40 V) */
+#define VDC14_LEVEL 7u                            /* 1.25 V + 0.05 V x level: v0.18 1.60 V (the top), for the accelerator + CPU traffic of
+                                                   * the Onyx engine (at 1.50 V its results were sporadically wrong, docs/07); v0.13.16 used 1.50 V */
 static uint8_t nam_vlevel = 13u;                  /* SYSVDD level for two cores (JBV sets it) */
 static uint8_t nam_dbg_marks;                     /* v0.11.3: stage markers through the main loop while NAM runs */            /* the crumb's stage (defined with it, below) */
 static void led_pwm_tick(void);
@@ -645,6 +646,14 @@ static volatile uint8_t au_tone, au_fmt = 4;      /* RJ24: measured right (tools
 static struct a2l nam __attribute__((section(".c1_bss.nam")));   /* v0.12.4: what core 1 reads, high RAM */
 static struct a2lq namq __attribute__((section(".c1_bss.nam")));  /* v0.13: the back half, fixed point (core 1) */
 static a2l_t nam_ring[A2L_RING_FRAMES * A2L_C] __attribute__((section(".pool")));
+/* v0.18: the NAM engine. 1 = Onyx's A2-Lite block engine on the accelerator (fw/onyx, fw/src/jb_onyx.c), in nam_ring's memory,
+ * run on core 1; 0 = the v0.13 two-core engine (a2lite.c front on core 0, a2lq.c back on core 1) */
+#define NAM_ENG_ONYX 1u
+static uint8_t nam_eng = NAM_ENG_ONYX;
+extern void onyx_prepare(void *mem, uint32_t size, const float *w, uint32_t n, uint32_t *r);
+extern float onyx_au_in[2][128], onyx_au_out[2][128];
+extern float onyx_head_scale(void);
+extern void onyx_reset(void), onyx_au_job(uint32_t slot);
 static volatile uint8_t nam_ok, nam_on, c1_ok;
 static uint32_t nam_us, nam_us_max;
 /* Two-core pipeline: core 0 runs a2l_front on block n while core 1 runs a2l_back on block n - 1 (one
@@ -1086,7 +1095,71 @@ static void audio_service(void)
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
     g = au_mute || au_umute ? 0u : ui_bypass ? au_bypass_gain : au_gain;
-    if (nam_on && nam_ok && c1_ok) {              /* guitar (L) -> A2-Lite (two cores) -> both outputs */
+    if (nam_on && nam_ok && c1_ok && nam_eng == NAM_ENG_ONYX) {   /* v0.18: guitar (L) -> Onyx engine on core 1 -> both outputs */
+        const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f * NAM_OUT_TRIM * onyx_head_scale();
+        const uint32_t slot = pipe_blk & 1u, prev = slot ^ 1u;
+        uint32_t t1 = fm1_ticks(), f, ran = 0;
+        float *nin = onyx_au_in[slot];
+        for (f = 0; f < AU_HALF / 2u; f++) {
+            int32_t x = (int32_t)((uint32_t)in[2u * f] << 8) >> 8;
+            uint32_t ax = (uint32_t)(x < 0 ? -x : x);
+            if (ax > au_peak[0])
+                au_peak[0] = ax;
+            if (ax > au_in_max)
+                au_in_max = ax;
+            if (ax >= 0x7F0000u) {
+                au_clip_in++;
+                au_clip_in_ev++;
+            }
+            nin[f] = (float)x * (nam_in * (1.0f / 8388608.0f));
+        }
+        if (pipe_busy) {                          /* core 1's block n - 1: it has had a whole half */
+            uint32_t w0 = fm1_ticks(), w;
+            while (fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 1500u * FM1_TICKS_PER_US)
+                FM1_C1_SYNC();
+            w = (fm1_ticks() - w0) / FM1_TICKS_PER_US;
+            if (w > pipe_late_max)
+                pipe_late_max = w;
+            if (fm1_c1_mb.done == fm1_c1_mb.job) {
+                pipe_busy = 0;
+                ran = pipe_job_blk + 1u == pipe_blk;
+            } else
+                pipe_late++;                      /* this half: silence */
+        }
+        if ((ALNK_CON2 & 0x30u) == 0x30u)
+            au_out_late++;
+        for (f = 0; f < AU_HALF / 2u; f++) {
+            float yf = ran ? onyx_au_out[prev][f] * gf : 0.0f;
+            float ya = yf < 0.0f ? -yf : yf;
+            int32_t y;
+            uint32_t ay;
+            if (ya > LIM_T) {                     /* soft knee, as the v0.13 path */
+                float o = ya - LIM_T;
+                if (o > LIM_R) {
+                    au_clip_out++;
+                    au_clip_out_ev++;
+                }
+                ya = LIM_T + LIM_R * o / (o + LIM_R);
+                yf = yf < 0.0f ? -ya : ya;
+            }
+            y = (int32_t)yf;
+            ay = (uint32_t)(y < 0 ? -y : y);
+            if (ay > au_peak[1])
+                au_peak[1] = ay;
+            out[2u * f] = out[2u * f + 1u] = y;
+        }
+        if (!pipe_busy && fm1_cpu1_run(onyx_au_job, slot)) {
+            pipe_busy = 1;
+            pipe_job_blk = pipe_blk;
+        }
+        pipe_primed = 1;
+        pipe_blk++;
+        nam_us = (fm1_ticks() - t1) / FM1_TICKS_PER_US;
+        if (nam_us > nam_us_max)
+            nam_us_max = nam_us;
+        goto done;
+    }
+    if (nam_on && nam_ok && c1_ok && nam_eng != NAM_ENG_ONYX) {   /* guitar (L) -> A2-Lite (two cores) -> both outputs */
         const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f * NAM_OUT_TRIM;
         const uint32_t slot = pipe_blk & 1u, prev = slot ^ 1u;
         uint32_t t1 = fm1_ticks(), f, ran = 0;
@@ -1502,6 +1575,8 @@ static void nam_start(void)
     c1_guard_setup();
     if (!c1_ok)
         c1_ok = fm1_cpu1_start() == 0;
+    if (nam_eng == NAM_ENG_ONYX)
+        CX2(0x34Cu) = 0;                          /* v0.18: core 1 writes the accelerator, the low SRAM and the driver's state */
     prof_start();
     pipe_primed = 0;
     nam_on = nam_ok && c1_ok && !ui_bypass;
@@ -1630,6 +1705,21 @@ static void ms_list_build(void)
 }
 
 /* load a capture into the NAM (stopped: boot, or paused): 0 = ok; on an error the running one stays */
+/* v0.18: load a capture's 1871 weights into the engine in use */
+static int nam_load(const float *w)
+{
+    if (nam_eng == NAM_ENG_ONYX) {
+        static uint32_t r[8];
+        onyx_prepare(nam_ring, sizeof nam_ring, w, 1871u, r);
+        return r[0] == 0u && r[1] ? 0 : 1;
+    }
+    if (a2l_load(&nam, w, A2L_NWEIGHTS, nam_ring))
+        return 1;
+    a2lx_load(&namq, &nam);
+    a2lx_reset(&nam, &namq);
+    return 0;
+}
+
 static int ms_use(uint32_t slot)
 {
     uint32_t rc;
@@ -1639,11 +1729,7 @@ static int ms_use(uint32_t slot)
     rc = (uint32_t)ms_read_data(slot, (uint8_t *)cap_in);
     if (rc)
         return (int)rc;
-    nam_ok = a2l_load(&nam, (const float *)cap_in, A2L_NWEIGHTS, nam_ring) == 0;
-    if (nam_ok) {                                /* v0.13: the back half in fixed point, prewarmed again through it */
-        a2lx_load(&namq, &nam);
-        a2lx_reset(&nam, &namq);
-    }
+    nam_ok = nam_load((const float *)cap_in) == 0;   /* (v0.13: the back half in fixed point, prewarmed through it) */
     nam_trim = ms_dir[slot].norm * NAM_OUT_BOOST;
     ms_active = (uint8_t)slot;
     return nam_ok ? 0 : 4;
@@ -1696,11 +1782,7 @@ static int ms_switch(uint32_t slot)
     while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
         FM1_C1_SYNC();
     pipe_busy = 0;
-    nam_ok = a2l_load(&nam, (const float *)src, A2L_NWEIGHTS, nam_ring) == 0;
-    if (nam_ok) {
-        a2lx_load(&namq, &nam);
-        a2lx_reset(&nam, &namq);
-    }
+    nam_ok = nam_load((const float *)src) == 0;
     nam_trim = ms_dir[slot].norm * NAM_OUT_BOOST;
     ms_active = (uint8_t)slot;
     pipe_primed = 0;
