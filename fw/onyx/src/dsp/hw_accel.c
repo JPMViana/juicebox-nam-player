@@ -185,6 +185,10 @@ void pa_hw_accel_force_sw(int on) {
 }
 
 volatile uint32_t jb_ready_delay;                 /* Juice-Box: see pa_hw_accel_wait_lean */
+/* Juice-Box: the last word the running job writes; read back after READY, so the CPU never reads a result the unit has not
+ * finished writing (the pipeline reads a job's results right after it completes: without this they were sporadically stale) */
+static volatile int32_t *jb_last_word;
+volatile uint32_t jb_readback = 1u;
 /* Juice-Box (diagnostic): jb_verify = 1 recomputes every conv-mode job on the CPU when it completes and compares the rows; the
  * count and the first bad job are kept at SRAM 0x01C7D200 (survives a reset): [0] "JBVF", [1] jobs checked, [2] bad jobs,
  * [3..8] the bad job's command, [9] row, [10] got, [11] want, [12] bad rows in it, [13] that job's number */
@@ -242,6 +246,7 @@ void pa_hw_accel_wait_lean(void) {
     for (uint32_t d = jb_ready_delay; d; d--)       /* Juice-Box: a settling time after READY (diagnostic, set by JBO 3) */
         __asm__ volatile("nop" ::: "memory");
     (void)reg[0];
+    if (jb_readback && jb_last_word) (void)*jb_last_word;
     __asm__ volatile("csync" ::: "memory");       /* Juice-Box: the results are read only after this */
     g_hw_busy = 0u;
     if (jb_vpend) jb_vcheck();
@@ -255,6 +260,7 @@ void pa_hw_accel_submit_lean(const pa_hw_vec_cmd_t *cmd) {
     if (g_hw_broken) { accel_software(cmd); return; }
     volatile uint32_t *reg = (volatile uint32_t *)PA_HW_VEC_BASE;
     jb_joblog(cmd->config, cmd->src_a, cmd->src_b, cmd->dst, cmd->ctrl, cmd->stride);
+    jb_last_word = (volatile int32_t *)cmd->dst + (((cmd->ctrl >> 12) & 0xFFFu) - 1u) * (((cmd->stride >> 20) & 0xFu) >> 2);
     if (jb_verify) { jb_vcmd = *cmd; jb_vpend = 1; }
     g_hw_cmd_block = *cmd;
     __asm__ volatile("csync" ::: "memory");       /* Juice-Box: barrier before START */
@@ -276,6 +282,7 @@ void pa_hw_accel_job_lean(uint32_t config, const void *a, const void *b, void *d
         if (!g_hw_broken) {
             volatile uint32_t *reg = (volatile uint32_t *)PA_HW_VEC_BASE;
             jb_joblog(config, a, b, dst, ctrl, stride);
+            jb_last_word = (volatile int32_t *)dst + (((ctrl >> 12) & 0xFFFu) - 1u) * (((stride >> 20) & 0xFu) >> 2);
             if (jb_verify) { jb_vcmd.config = config; jb_vcmd.src_a = a; jb_vcmd.src_b = b; jb_vcmd.dst = dst; jb_vcmd.ctrl = ctrl; jb_vcmd.stride = stride; jb_vpend = 1; }
             g_hw_cmd_block.config = config; g_hw_cmd_block.src_a = a; g_hw_cmd_block.src_b = b;
             g_hw_cmd_block.dst = dst; g_hw_cmd_block.ctrl = ctrl; g_hw_cmd_block.stride = stride;
