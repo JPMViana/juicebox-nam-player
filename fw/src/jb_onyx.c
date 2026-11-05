@@ -156,6 +156,7 @@ void onyx_c1_block(uint32_t unused)
  * (two 64-sample blocks) into onyx_au_out[slot] (the raw head output; x onyx_head_scale() = the model's output) */
 float onyx_au_in[2][128], onyx_au_out[2][128];
 float onyx_head_scale(void) { return om ? om->head_scale : 0.0f; }
+uint32_t onyx_weights_addr(void) { return om ? (uint32_t)om->weights : 0u; }
 int onyx_loaded(void) { return om && om->blk_ok && om->active; }
 void onyx_reset(void) { if (om) pa_wavenet_reset(om); }
 void onyx_au_job(uint32_t slot)

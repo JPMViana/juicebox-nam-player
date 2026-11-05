@@ -615,7 +615,7 @@ static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MA
 /* v0.17.2: the bypass (left footswitch, dry signal) runs at a fixed gain, not MASTER's: the user compared it with the guitar
  * straight into the amp and it was far quieter (MASTER's squared curve is -12 dB at half way). Q16; 65536 = the input word
  * to the output word. Set over USB for calibration (JBK): tools/jb_bypass.py */
-static volatile uint32_t au_bypass_gain = 65536u;
+static volatile uint32_t au_bypass_gain = 32768u;    /* v0.18: -6 dB (the user's ear test: unity distorted, -6 dB excellent) */
 static uint8_t ui_bypass;                         /* (defined with the UI below; the audio path reads it) */
 static volatile uint8_t au_mute;                  /* v0.15: output silent (a capture is being loaded) */
 static volatile uint8_t au_umute;                 /* v0.16: the player's MUTE (left footswitch held) */
@@ -654,6 +654,8 @@ extern void onyx_prepare(void *mem, uint32_t size, const float *w, uint32_t n, u
 extern float onyx_au_in[2][128], onyx_au_out[2][128];
 extern float onyx_head_scale(void);
 extern void onyx_reset(void), onyx_au_job(uint32_t slot);
+extern uint32_t onyx_weights_addr(void);
+#define CAP_INFO ((volatile uint32_t *)0x01C7D300u)   /* v0.18 capture: the scaling it ran with (tools/jb_capture_onyx.py) */
 static volatile uint8_t nam_ok, nam_on, c1_ok;
 static uint32_t nam_us, nam_us_max;
 /* Two-core pipeline: core 0 runs a2l_front on block n while core 1 runs a2l_back on block n - 1 (one
@@ -1112,6 +1114,20 @@ static void audio_service(void)
                 au_clip_in_ev++;
             }
             nin[f] = (float)x * (nam_in * (1.0f / 8388608.0f));
+            if (cap_state == 1u && ax > (1u << 20))
+                cap_state = 4;                    /* > -18 dBFS: start here */
+        }
+        if (cap_state == 4u) {                    /* v0.18 capture (JBW): from a known state, core 1 idle first */
+            uint32_t w0 = fm1_ticks();
+            while (pipe_busy && fm1_c1_mb.done != fm1_c1_mb.job && fm1_ticks() - w0 < 5000u * FM1_TICKS_PER_US)
+                FM1_C1_SYNC();
+            pipe_busy = 0;
+            onyx_reset();
+            { float hs = onyx_head_scale(), ni = nam_in, gg = gf, tr = NAM_OUT_TRIM;
+              CAP_INFO[0] = 0x4943424Au; memcpy((void *)&CAP_INFO[1], &hs, 4); memcpy((void *)&CAP_INFO[2], &ni, 4);
+              memcpy((void *)&CAP_INFO[3], &gg, 4); CAP_INFO[4] = onyx_weights_addr(); CAP_INFO[5] = g; memcpy((void *)&CAP_INFO[6], &tr, 4); }
+            cap_n = 0;
+            cap_state = 2;
         }
         if (pipe_busy) {                          /* core 1's block n - 1: it has had a whole half */
             uint32_t w0 = fm1_ticks(), w;
@@ -1147,6 +1163,19 @@ static void audio_service(void)
             if (ay > au_peak[1])
                 au_peak[1] = ay;
             out[2u * f] = out[2u * f + 1u] = y;
+        }
+        if (cap_state == 2u || cap_state == 5u) {  /* the output of the half before (raw head output, float bits), this half's input */
+            if (cap_n > 0u)
+                for (f = 0; f < AU_HALF / 2u; f++)
+                    cap_out[cap_n - 1u][f] = ran ? *(const int32_t *)&onyx_au_out[prev][f] : 0x7FFFFFFF;
+            if (cap_state == 5u)
+                cap_state = 3;
+            else {
+                for (f = 0; f < AU_HALF / 2u; f++)
+                    cap_in[cap_n][f] = *(const int32_t *)&nin[f];
+                if (++cap_n == CAP_BLK)
+                    cap_state = 5;
+            }
         }
         if (!pipe_busy && fm1_cpu1_run(onyx_au_job, slot)) {
             pipe_busy = 1;
