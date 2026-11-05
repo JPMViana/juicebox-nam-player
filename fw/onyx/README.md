@@ -15,3 +15,4 @@ and `NOTICE.md`). Used here under the GPL-3.0, the licence of this project. Than
 Analysis: [docs/09-onyx-analysis.md](../../docs/09-onyx-analysis.md). Local changes:
 - `src/dsp/hw_accel.c`: a log of the last 16 accelerator jobs at SRAM `0x01C7D000` (survives a reset) and
   `pa_hw_accel_force_sw()` (run every job in the software model), both for diagnostics.
+- `src/dsp/hw_accel.c`: a `csync` barrier before every START and after the lean wait (results were sporadically wrong without it).

@@ -201,6 +201,7 @@ void pa_hw_accel_wait_lean(void) {
         }
     }
     reg[0] |= PA_HW_VEC_STATUS_ACK;
+    __asm__ volatile("csync" ::: "memory");       /* Juice-Box: the results are read only after this */
     g_hw_busy = 0u;
 #endif
 }
@@ -213,6 +214,7 @@ void pa_hw_accel_submit_lean(const pa_hw_vec_cmd_t *cmd) {
     volatile uint32_t *reg = (volatile uint32_t *)PA_HW_VEC_BASE;
     jb_joblog(cmd->config, cmd->src_a, cmd->src_b, cmd->dst, cmd->ctrl, cmd->stride);
     g_hw_cmd_block = *cmd;
+    __asm__ volatile("csync" ::: "memory");       /* Juice-Box: barrier before START */
     reg[2] = 0u;
     reg[1] = (uint32_t)(uintptr_t)&g_hw_cmd_block;
     reg[0] = 0x00000149u;
@@ -233,6 +235,7 @@ void pa_hw_accel_job_lean(uint32_t config, const void *a, const void *b, void *d
             jb_joblog(config, a, b, dst, ctrl, stride);
             g_hw_cmd_block.config = config; g_hw_cmd_block.src_a = a; g_hw_cmd_block.src_b = b;
             g_hw_cmd_block.dst = dst; g_hw_cmd_block.ctrl = ctrl; g_hw_cmd_block.stride = stride;
+            __asm__ volatile("csync" ::: "memory");   /* Juice-Box: the CPU's stores reach SRAM before the unit reads */
             reg[2] = 0u;
             reg[1] = (uint32_t)(uintptr_t)&g_hw_cmd_block;
             reg[0] = 0x00000149u;
@@ -261,6 +264,7 @@ PA_HOT void pa_hw_accel_submit(const pa_hw_vec_cmd_t *cmd) {
     PA_ISR_CP(0x62);
 
     g_hw_cmd_block = *cmd;
+    __asm__ volatile("csync" ::: "memory");       /* Juice-Box: barrier before START */
     PA_ISR_CP(0x63);
 
     reg[2] = 0u;                              /* [0x01EE0408] = 0 */
