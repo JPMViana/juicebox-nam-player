@@ -365,7 +365,7 @@ class Updater:
         def prog(k, end):
             if end <= 512:                          # offset 0 read again and again = the identical-package loop
                 sw["zeros"] += 1
-                if sw["zeros"] >= 5 and sw["pct"] < 5:
+                if sw["zeros"] >= 15 and sw["pct"] < 2:
                     raise SameFirmware()
             if sw["top"] is None:
                 if end > len(image) // 2:
