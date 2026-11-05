@@ -40,6 +40,13 @@ vendor's ANN engine, the official editor. Audio chain:
   2700 µs/block (v0.13.16)
 - [x] NAM on at boot + real guitar test (v0.13.17–22): audio path fixed; "usable" sound
 - [ ] Refine the sound: 48 kHz rate (or resampling), input gain, output gain/limiter
+- [ ] **Bypass is much quieter than the guitar plugged straight in** (user test, 2026-11-05): with NAM the output level is
+  fine, but the left footswitch's bypass (dry signal) comes out far below the guitar direct to the amp. Bring the dry path
+  to unity gain (input to output) independently of the NAM output gain
+- [ ] **IN / OUT meters never reach the bottom**: the equipment's noise floor keeps both bars above zero. Rescale them
+  (dBFS with a floor around the measured noise, e.g. -60 dBFS = empty) so silence reads as empty
+- [ ] **Headphones and levels**: review how Onyx handles the PHONES output, master volume and output stages
+  ([09](09-onyx-analysis.md)) and apply what fits; test the PHONES output
 - [ ] Noise gate before NAM
 
 ## Phase 5 – User tools

@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.17.1"
+#define JB_VERSION "v0.17.2"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -611,6 +611,11 @@ static int32_t au_tx[2 * AU_HALF] __attribute__((aligned(4)));
 static int32_t au_rx[2 * AU_HALF] __attribute__((aligned(4)));
 static uint8_t au_on;
 static volatile uint32_t au_gain = 0;             /* Q16 output gain from the MASTER pot */
+/* v0.17.2: the bypass (left footswitch, dry signal) runs at a fixed gain, not MASTER's: the user compared it with the guitar
+ * straight into the amp and it was far quieter (MASTER's squared curve is -12 dB at half way). Q16; 65536 = the input word
+ * to the output word. Set over USB for calibration (JBK): tools/jb_bypass.py */
+static volatile uint32_t au_bypass_gain = 65536u;
+static uint8_t ui_bypass;                         /* (defined with the UI below; the audio path reads it) */
 static volatile uint8_t au_mute;                  /* v0.15: output silent (a capture is being loaded) */
 static volatile uint8_t au_umute;                 /* v0.16: the player's MUTE (left footswitch held) */
 /* v0.13.22: the model's loudness normalized to -18 dB as the NAM plugin does (tools/nam2c.py, per model), then
@@ -1080,7 +1085,7 @@ static void audio_service(void)
     au_h ^= 1u;
     in = au_rx + h * AU_HALF;
     out = au_tx + h * AU_HALF;
-    g = au_mute || au_umute ? 0u : au_gain;
+    g = au_mute || au_umute ? 0u : ui_bypass ? au_bypass_gain : au_gain;
     if (nam_on && nam_ok && c1_ok) {              /* guitar (L) -> A2-Lite (two cores) -> both outputs */
         const float gf = (float)g * (1.0f / 65536.0f) * 8388608.0f * NAM_OUT_TRIM;
         const uint32_t slot = pipe_blk & 1u, prev = slot ^ 1u;
@@ -3448,6 +3453,20 @@ static void debug_service(void)                   /* our SysEx; anything else st
         k = 5u + ota_pack7((const uint8_t *)st, 24, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
+    } else if ((n == 4u || n == 7u) && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'K') {
+        static uint8_t msg[16];                   /* v0.17.2: JBK [g0 g1 g2]: the bypass gain (Q16, 21 bits LSB first), reply it */
+        uint32_t k, v;
+        ota_frame_done();
+        if (n == 7u) {
+            v = (uint32_t)p[4] | (uint32_t)p[5] << 7 | (uint32_t)p[6] << 14;
+            if (v <= 4u * 65536u)
+                au_bypass_gain = v;
+        }
+        v = au_bypass_gain;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'K';
+        k = 5u + ota_pack7((const uint8_t *)&v, 4, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
     } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'D') {
         static uint8_t msg[48];                   /* v0.17.1: JBD t -> acc_test(t) result, 8 words (t 0..3) */
         uint32_t r[8], k;
@@ -3756,13 +3775,20 @@ static void jb_main(void)
                     clip_until[ch] = now + 1000u;
                 }
                 clip = (int32_t)(clip_until[ch] - now) > 0;
-                while (pk > 64u && lv < 17u) {    /* ~6 dB steps from -102 dBFS */
-                    pk >>= 1;
-                    lv++;
+                {   /* v0.17.2: dBFS, -60 = empty .. 0 = full (136 px): the noise floor (-77..-91 dBFS) no longer lights
+                     * the bar. log2 from the top bit plus 4 bits below it: about 0.4 dB steps */
+                    uint32_t msb = 0, fr;
+                    int32_t db10;                 /* dBFS x 10 */
+                    if (pk) {
+                        while (pk >> (msb + 1u))
+                            msb++;
+                        fr = msb >= 4u ? (pk >> (msb - 4u)) & 15u : (pk << (4u - msb)) & 15u;
+                        db10 = (int32_t)((msb * 16u + fr) * 602u / 160u) - 1386;   /* 6.02 dB a bit; 2^23 = 0 dBFS */
+                    } else
+                        db10 = -1200;
+                    w = db10 <= -600 ? 0u : db10 >= 0 ? 136u : (uint32_t)(db10 + 600) * 136u / 600u;
+                    lv = db10 >= -60 ? 15u : 0u;  /* the last 6 dB: warning colour */
                 }
-                w = lv * 8u;
-                if (w > 136u)
-                    w = 136u;
                 if (w)
                     lcd_fill(56, UI_MY + 6u + ch * 22u, w, 8, clip ? C_ERR : lv >= 15u ? C_WARN : C_OK);
                 if (w < 136u)
