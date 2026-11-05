@@ -5,6 +5,22 @@ Name: **Juice-Box**, by **João Viana** (until v0.1.2: armaria-nam). Identity in
 
 Newest first. "Package" is the identity the pedal reports (`BlackBox_NNN`).
 
+## v0.17.1 (2026-11-05) — the matrix accelerator works on the BlackBox
+
+`BlackBox_981`: command `JBD t` (`tools/jb_accel.py`) runs one job on the matrix × vector unit at `0x01EE0400`
+([09](09-onyx-analysis.md)) and compares it with the CPU. Nothing else changes; the test only runs on request.
+
+| Test | Shape | Result (3 runs each, NAM running on both cores) |
+|---|---|---|
+| 0 | 4 × 3 | exact, 0.4 µs |
+| 1 | 64 × 20, 12-byte output records (an A2-Lite k = 6 layer) | exact, 16.7 µs |
+| 2 | 64 × 47, 12-byte output records (k = 15) | exact, 35.9 µs |
+| 3 | the stock's 9 × 17 job (vector / matrix swapped, stride `0x411000`) | exact, 2.1 µs |
+
+**~12 ns per multiply-add (≈ 84 MMAC/s, ~2.9 cycles at 240 MHz)** with 64-bit accumulation, rounding and saturation as
+documented by Onyx, running in parallel with the CPU. No extra clock or power setup was needed. The buffers were in C1RAM
+(`0x01C68E00..`), so the unit reaches the high RAM too.
+
 ## v0.15 – v0.17 (2026-11-03/04) — on-screen UI, banks, bilingual
 
 | Version | Package | What changed | Verified |

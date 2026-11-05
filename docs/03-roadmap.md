@@ -56,13 +56,14 @@ vendor's ANN engine, the official editor. Audio chain:
 - [x] English documentation; README and user guide also in Portuguese
 - [x] Release builds by GitHub Actions (macOS universal + Windows), SHA-256 checksums
 - [ ] **First public test**: macOS and Windows testers
-- [ ] Fix the window staying at 99 % before finishing ([08](08-installer.md))
+- [x] Window staying at 99 %: the progress summed the bytes served, but the loader reads backwards (fixed, to confirm in the app)
 - [ ] Own VID:PID at pid.codes (today `1209:0001`, a test PID)
 - [x] Own installer icon (the splash screen's juice jug, `installer/scripts/gen_icon.py`)
 - [ ] Battery calibration, charger status pin, LED map ([07](07-firmware-history.md))
 - [ ] Test the PHONES output
 
 ## Phase 7 – IR (after the first distributable version)
+- [x] Matrix accelerator works on the BlackBox: exact, ~84 MMAC/s (v0.17.1, [07](07-firmware-history.md))
 - [ ] Run the A2-Lite convolutions on the chip's matrix accelerator (`0x01EE0400`, as Onyx and the stock firmware do,
   [09](09-onyx-analysis.md)) to free CPU for an IR
 - [ ] Load IRs from the installer. May run **without NAM at the same time** (IR-only mode), since NAM already uses

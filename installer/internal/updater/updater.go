@@ -250,8 +250,8 @@ func (u *Updater) waitFor(want func(Identity) bool, d time.Duration) *Dev {
 }
 
 // serve answers read requests until the device asks for finish; prog gets the requests and the bytes served so far.
-func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served, bytes int)) (served int, finished, lost bool, err error) {
-	sent, same := 0, 0
+func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served int, addr uint32)) (served int, finished, lost bool, err error) {
+	same := 0
 	var prevAddr uint32 = 0xFFFFFFFF
 	prevN := -1
 	last := time.Now() // the last valid request: other traffic must not hold the loop forever
@@ -296,8 +296,7 @@ func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Du
 			return served, false, true, nil
 		}
 		served++
-		sent += n
-		prog(served, sent)
+		prog(served, addr)
 	}
 }
 
@@ -305,7 +304,7 @@ func (u *Updater) check(dev *Dev, image []byte, step Step) (*Dev, error) {
 	step("start", dev.ID.Text, 0)
 	dev.Link.Send(upgrade)
 	time.Sleep(u.D.Start)
-	served, finished, lost, err := u.serve(dev.Link, image, finishCheck, u.D.IdleCheck, func(k, _ int) { step("check", "", k) })
+	served, finished, lost, err := u.serve(dev.Link, image, finishCheck, u.D.IdleCheck, func(k int, _ uint32) { step("check", "", k) })
 	dev.Link.Close()
 	u.logf("step 1: served %d, finished %v, lost %v, err %v", served, finished, lost, err)
 	if err != nil {
@@ -332,14 +331,21 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 	step("write", "", 0)
 	ota.Link.Send(upgrade)
 	time.Sleep(u.D.Start)
-	// the loader reads the package from its end backwards (and skips what is already on the flash): the
-	// progress is the bytes served so far, which only grows
-	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_, sent int) {
-		p := sent * 100 / len(image)
-		if p > 99 {
-			p = 99
+	// the loader reads the head first, then the package from its end backwards to the start (seen on the pedal:
+	// the offset goes 0-2 %, then 96 % down to 0 %). Summing the bytes served overshot 100 % early, so the bar sat
+	// at 99 % for the whole write. The progress is how far down the backward sweep is, and it only grows.
+	sweep, pct := false, 0
+	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_ int, addr uint32) {
+		if int(addr) > len(image)/2 {
+			sweep = true
 		}
-		step("write", "", p)
+		if !sweep {
+			return
+		}
+		if p := (len(image) - int(addr)) * 100 / len(image); p > pct {
+			pct = min(p, 99)
+		}
+		step("write", "", pct)
 	})
 	ota.Link.Close()
 	u.logf("step 2: served %d, finished %v, lost %v, err %v", served, finished, lost, err)

@@ -54,7 +54,15 @@ git push origin main v0.18.0         # GitHub Actions: macOS universal + Windows
   but the window sits at 99 % for a while before finishing (below).
 - Windows: not tested yet.
 
-## Open bug: the window stays at 99 % while writing
+## Bug (fixed 2026-11-05): the window stays at 99 % while writing
+
+**Cause found:** the loader reads the package head first and then **from its end backwards** (the Python client showed the
+offset going 0–2 %, then 96 % down to 0 %, on the v0.17.1 install). The app's progress summed the bytes served, which
+passed 100 % early and was clamped to 99 % for the rest of the write. The write itself was fine all along. The progress
+now follows the backward sweep (`internal/updater` `write`, and `tools/bb_install.py`). To confirm with the next install
+from the app.
+
+Earlier notes:
 
 Session of 2026-11-04 00:41 (log in the user cache dir, `Juice-Box/installer.log`):
 - Reinstall Juice-Box 980 → 980 from the window. Step 1 ok (75 reads, `finished true`). The loader showed up as port

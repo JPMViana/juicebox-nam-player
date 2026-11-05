@@ -55,6 +55,12 @@ the stock "ANN" engine very likely does the same.
 | IR | none | float FFT partitioned, 1024–2048 taps, core 0 |
 | Clock | measured 240 MHz | assumes 360 MHz (unverified) |
 
+## Confirmed on the BlackBox (v0.17.1)
+
+`tools/jb_accel.py`: all four test shapes exact; ~12 ns per multiply-add (≈ 84 MMAC/s). The A2-Lite convolutions are
+~1.5k multiply-adds per sample (≈ 66 MMAC/s at 44.1 kHz), about 80 % of the unit, in parallel with the CPU, which is left
+with the gathers, the activations and the 1x1 mixes. See [07](07-firmware-history.md#v0171-2026-11-05--the-matrix-accelerator-works-on-the-blackbox).
+
 ## What it means for us
 
 1. **Using the accelerator for the A2-Lite convolutions** could free most of one core: the per-layer convolutions are the

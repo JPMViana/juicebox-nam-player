@@ -347,8 +347,16 @@ class Updater:
         step("write", 0)
         ota.link.send(UPGRADE)
         time.sleep(DELAY["start"])
-        served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"],
-                                            lambda k, end: step("write", min(99, end * 100 // len(image))))
+        # the loader reads the head, then the package from its end backwards: show how far down that sweep is
+        sw = {"on": False, "pct": 0}
+
+        def prog(k, end):
+            if end > len(image) // 2:
+                sw["on"] = True
+            if sw["on"]:
+                sw["pct"] = max(sw["pct"], min(99, (len(image) - end) * 100 // len(image)))
+                step("write", sw["pct"])
+        served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"], prog)
         ota.link.close()
         if not finished:
             raise InstallError("lost" if lost else "stopped",
