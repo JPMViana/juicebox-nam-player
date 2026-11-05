@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 #define JB_NAME "Juice-Box"
-#define JB_VERSION "v0.17.0"
+#define JB_VERSION "v0.17.1"
 #define FELUCCA_LOADER 1                 /* usb.c: the polled, MIDI-only build of Felucca's loader */
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 0
@@ -2701,6 +2701,105 @@ static void ui_encoder(uint32_t din)
     }
 }
 
+/* v0.17.1 (JBD): the chip's matrix x vector accelerator at 0x01EE0400 (docs/09-onyx-analysis.md). The stock V20 drives it with
+ * the same protocol (app_v20 0x2045ED2..0x2045F06): a 24-byte command block {config, src_a, src_b, dst, ctrl, stride}, then
+ * [+8] = 0, [+4] = &block, [+0] = 0x149 (start); done when [+0] bit 7 is set, acknowledged by setting bit 6. Only run on request
+ * (USB), never at boot; every wait is bounded, so a unit that never answers reports a timeout instead of hanging.
+ *   ctrl = shift << 24 | rows << 12 | cols
+ *   mode C ("conv", stride & 0xFFFF = row step in bytes, stride bits 23:20 = output step in bytes): src_a = matrix, src_b = vector,
+ *          dst[r * ostep] = sat((sum_j A[r * step + j] * B[j] + round) >> shift)        (what an A2-Lite layer needs, Onyx)
+ *   mode G (the stock's own job: config 0xAA1, ctrl 0x15009011, stride 0x411000): src_a = vector, src_b = matrix 9 x 17 */
+#define ACC_REG ((volatile uint32_t *)0x01EE0400u)
+#define ACC_CFG_MATVEC 0x0AA1u
+#define ACC_TIMEOUT_TICKS (24u * 2000u)           /* 2 ms (TIMER4 24 MHz): a 64 x 20 job takes far less */
+/* the buffers live in the high RAM (C1RAM, past core 1's data): the 72 KB data region is full */
+#define ACC_SEC __attribute__((section(".c1_bss.acc"), aligned(8)))
+static volatile uint32_t acc_cmd[6] ACC_SEC;
+static int32_t acc_a[64 * 48] ACC_SEC;            /* matrix (up to 64 rows x 47 columns) */
+static int32_t acc_b[48] ACC_SEC;                 /* vector */
+static int32_t acc_d[64 * 3 + 8] ACC_SEC;         /* results (up to 64 records of 12 B) + a guard */
+
+/* one job; returns its time in TIMER4 ticks, or 0xFFFFFFFF on a timeout (the unit is then stopped and acknowledged) */
+static uint32_t acc_job(const void *a, const void *b, void *d, uint32_t ctrl, uint32_t stride)
+{
+    uint32_t t0;
+    acc_cmd[0] = ACC_CFG_MATVEC; acc_cmd[1] = (uint32_t)a; acc_cmd[2] = (uint32_t)b; acc_cmd[3] = (uint32_t)d;
+    acc_cmd[4] = ctrl; acc_cmd[5] = stride;
+    __asm__ volatile("csync" ::: "memory");
+    fm1_irq_off();                                /* interrupts off for the job (at most 2 ms): the time is the unit's alone */
+    ACC_REG[2] = 0u;
+    ACC_REG[1] = (uint32_t)acc_cmd;
+    t0 = fm1_ticks();
+    ACC_REG[0] = 0x149u;
+    while (!(ACC_REG[0] & 0x80u))
+        if (fm1_ticks() - t0 > ACC_TIMEOUT_TICKS) {
+            ACC_REG[0] |= 0x40u;
+            ACC_REG[0] = 0u;
+            fm1_irq_on();
+            return 0xFFFFFFFFu;
+        }
+    t0 = fm1_ticks() - t0;
+    ACC_REG[0] |= 0x40u;
+    fm1_irq_on();
+    __asm__ volatile("csync" ::: "memory");
+    return t0;
+}
+
+static int32_t acc_ref(int64_t acc, uint32_t shift)              /* the rounding and saturation the unit applies (Onyx, verified there) */
+{
+    acc = (acc + (shift ? (int64_t)1 << (shift - 1u) : 0)) >> shift;
+    if (acc > 2147483647LL) acc = 2147483647LL;
+    if (acc < -2147483647LL - 1) acc = -2147483647LL - 1;
+    return (int32_t)acc;
+}
+
+static uint32_t acc_seed = 0x1234567u;
+static int32_t acc_rnd(int32_t lim)                               /* signed, |v| < lim */
+{
+    acc_seed = acc_seed * 1664525u + 1013904223u;
+    return (int32_t)((acc_seed >> 1) % (uint32_t)(2 * lim - 1)) - (lim - 1);
+}
+
+/* test t: 0 = 4 x 3 (Onyx's self-test), 1 = 64 x 20 with 12-byte output records (an A2-Lite k = 6 layer), 2 = 64 x 47 (k = 15),
+ * 3 = the stock's 9 x 17 job (mode G). Result r[8]: 0 status (0 ok, 1 mismatch, 2 timeout, 3 guard overwritten), 1 rows, 2 cols,
+ * 3 ticks, 4 mismatches, 5 first bad index, 6 its value, 7 the expected value. */
+static void acc_test(uint32_t t, uint32_t *r)
+{
+    uint32_t rows, cols, shift = 24u, ostep = 1u, i, j, bad = 0, first = 0xFFFFu, ctrl, stride;
+    int32_t got = 0, want = 0;
+    const int g = t == 3u;
+    if (t == 0u) { rows = 4u; cols = 3u; }
+    else if (t == 1u) { rows = 64u; cols = 20u; ostep = 3u; }
+    else if (t == 2u) { rows = 64u; cols = 47u; ostep = 3u; }
+    else { rows = 9u; cols = 17u; shift = 21u; }
+    for (i = 0; i < rows * cols; i++)
+        acc_a[i] = acc_rnd(1 << 22);                              /* about +-0.25 in Q24: sums of up to 47 terms stay in range */
+    for (j = 0; j < cols; j++)
+        acc_b[j] = acc_rnd(1 << 24);
+    for (i = 0; i < sizeof acc_d / 4u; i++)
+        acc_d[i] = (int32_t)0x7FEEDBACu;
+    if (g) { ctrl = 0x15009011u; stride = 0x411000u; }
+    else { ctrl = shift << 24 | rows << 12 | cols; stride = (ostep * 4u) << 20 | cols * 4u; }
+    r[3] = g ? acc_job(acc_b, acc_a, acc_d, ctrl, stride) : acc_job(acc_a, acc_b, acc_d, ctrl, stride);
+    r[1] = rows; r[2] = cols;
+    if (r[3] == 0xFFFFFFFFu) {
+        r[0] = 2u; r[4] = r[5] = r[6] = r[7] = 0u;
+        return;
+    }
+    for (i = 0; i < rows; i++) {
+        int64_t s = 0;
+        for (j = 0; j < cols; j++)
+            s += (int64_t)acc_a[i * cols + j] * acc_b[j];
+        const int32_t e = acc_ref(s, shift), v = acc_d[i * ostep];
+        if (v != e) {
+            if (!bad) { first = i; got = v; want = e; }
+            bad++;
+        }
+    }
+    r[0] = bad ? 1u : acc_d[rows * ostep] != (int32_t)0x7FEEDBACu ? 3u : 0u;   /* 3: right results, but it wrote past its rows */
+    r[4] = bad; r[5] = first; r[6] = (uint32_t)got; r[7] = (uint32_t)want;
+}
+
 static void debug_service(void)                   /* our SysEx; anything else stays for ota_service */
 {
     const uint8_t *p;
@@ -3347,6 +3446,18 @@ static void debug_service(void)                   /* our SysEx; anything else st
         st[4] = au_gain; st[5] = CAP_BLK;
         msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'W';
         k = 5u + ota_pack7((const uint8_t *)st, 24, msg + 5);
+        msg[k++] = 0xF7;
+        ota_wire_send(msg, k);
+    } else if (n == 5u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'D') {
+        static uint8_t msg[48];                   /* v0.17.1: JBD t -> acc_test(t) result, 8 words (t 0..3) */
+        uint32_t r[8], k;
+        ota_frame_done();
+        if (p[4] <= 3u)
+            acc_test(p[4], r);
+        else
+            for (k = 0; k < 8u; k++) r[k] = 0xFFu;
+        msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'D';
+        k = 5u + ota_pack7((const uint8_t *)r, 32, msg + 5);
         msg[k++] = 0xF7;
         ota_wire_send(msg, k);
     } else if (n == 4u && p[0] == 0x7D && p[1] == 'J' && p[2] == 'B' && p[3] == 'G') {
