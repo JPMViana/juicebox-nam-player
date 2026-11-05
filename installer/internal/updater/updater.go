@@ -56,6 +56,7 @@ const (
 	ErrNoLoader
 	ErrNoReturn
 	ErrMismatch
+	ErrSame // the pedal already has exactly this firmware: its loader re-reads the package head and writes nothing
 )
 
 // Error is an install failure; Code tells the UI what to say and suggest.
@@ -250,7 +251,7 @@ func (u *Updater) waitFor(want func(Identity) bool, d time.Duration) *Dev {
 }
 
 // serve answers read requests until the device asks for finish; prog gets the requests and the bytes served so far.
-func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served int, addr uint32)) (served int, finished, lost bool, err error) {
+func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Duration, prog func(served int, addr uint32) bool) (served int, finished, lost bool, err error) {
 	same := 0
 	var prevAddr uint32 = 0xFFFFFFFF
 	prevN := -1
@@ -296,7 +297,9 @@ func (u *Updater) serve(l midiio.Link, image []byte, finish uint32, idle time.Du
 			return served, false, true, nil
 		}
 		served++
-		prog(served, addr)
+		if !prog(served, addr) {
+			return served, false, false, &Error{ErrSame, "the pedal already runs this firmware: nothing to write"}
+		}
 	}
 }
 
@@ -304,7 +307,7 @@ func (u *Updater) check(dev *Dev, image []byte, step Step) (*Dev, error) {
 	step("start", dev.ID.Text, 0)
 	dev.Link.Send(upgrade)
 	time.Sleep(u.D.Start)
-	served, finished, lost, err := u.serve(dev.Link, image, finishCheck, u.D.IdleCheck, func(k int, _ uint32) { step("check", "", k) })
+	served, finished, lost, err := u.serve(dev.Link, image, finishCheck, u.D.IdleCheck, func(k int, _ uint32) bool { step("check", "", k); return true })
 	dev.Link.Close()
 	u.logf("step 1: served %d, finished %v, lost %v, err %v", served, finished, lost, err)
 	if err != nil {
@@ -334,18 +337,26 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 	// the loader's order (seen on the pedal): one read near the end, a few in the head (the first ~4 %), then the package
 	// from its end backwards to the start. Summing the bytes served passed 100 % early (the bar sat at 99 % for the whole
 	// write). The progress is how far down the backward sweep is; the head reads are skipped; it only grows.
-	top, low, pct := -1, -1, 0
+	// A package identical to what the pedal runs (seen on the pedal, 2026-11-05): the loader re-reads the head and the cfg
+	// (0, 0x200, 0x400, 0x4400, 0xa47e0, 0xa4800) over and over and writes nothing; it never asks for the end. Five reads of
+	// offset 0 before any backward sweep = that loop: stop and say so.
+	top, low, pct, zeros := -1, -1, 0, 0
 	n := len(image)
-	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_ int, addr uint32) {
+	served, finished, lost, err := u.serve(ota.Link, image, finishWrite, u.D.IdleWrite, func(_ int, addr uint32) bool {
 		end := int(addr) // the request's start: the sweep's position
+		if addr == 0 {
+			if zeros++; zeros >= 5 && pct < 5 {
+				return false
+			}
+		}
 		if top < 0 {
-			if end > n/2 {
+			if end > n/2 && end < n*97/100 {
 				top, low = end, end
 			}
-			return
+			return true
 		}
 		if end*100 <= n*5 && low*100 > n*10 {
-			return
+			return true
 		}
 		if end < low {
 			low = end
@@ -356,6 +367,7 @@ func (u *Updater) write(ota *Dev, image []byte, step Step) error {
 			}
 		}
 		step("write", "", pct)
+		return true
 	})
 	ota.Link.Close()
 	u.logf("step 2: served %d, finished %v, lost %v, err %v", served, finished, lost, err)

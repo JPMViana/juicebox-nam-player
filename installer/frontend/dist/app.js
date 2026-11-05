@@ -134,8 +134,11 @@ function renderStatus() {
     sub.textContent = t("otherSub", vars);
   }
   $("#fwJuiceText").textContent = rel ? t("fwJuiceText", vars) : t("fwNoRelease");
-  $("#fwInstall").textContent = t("reinstall", vars);
-  $("#fwInstall").disabled = !rel;
+  {   /* the same version is already on the pedal: nothing to write (an identical package makes the loader loop) */
+    const same = juice && relNum() && status.version === relNum();
+    $("#fwInstall").textContent = same ? t("upToDate") : t("reinstall", vars);
+    $("#fwInstall").disabled = !rel || same;
+  }
 }
 
 async function poll() {

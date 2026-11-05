@@ -360,9 +360,13 @@ class Updater:
         time.sleep(DELAY["start"])
         # the loader's order (seen on the pedal): one read near the end, a few in the head (the first ~4 %), then the
         # package from its end backwards to the start. Progress = how far down that sweep is; head reads are skipped.
-        sw = {"top": None, "low": None, "pct": 0}
+        sw = {"top": None, "low": None, "pct": 0, "zeros": 0}
 
         def prog(k, end):
+            if end <= 512:                          # offset 0 read again and again = the identical-package loop
+                sw["zeros"] += 1
+                if sw["zeros"] >= 5 and sw["pct"] < 5:
+                    raise SameFirmware()
             if sw["top"] is None:
                 if end > len(image) // 2:
                     sw["top"] = sw["low"] = end
@@ -372,7 +376,12 @@ class Updater:
             sw["low"] = min(sw["low"], end)
             sw["pct"] = max(sw["pct"], min(99, (sw["top"] - sw["low"]) * 100 // sw["top"]))
             step("write", sw["pct"])
-        served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"], prog)
+        try:
+            served, finished, lost = self.serve(ota.link, image, FINISH_WRITE, DELAY["idle_write"], prog)
+        except SameFirmware:
+            ota.link.close()
+            raise InstallError("same", "the pedal already runs this firmware: nothing was written "
+                                       "(if it stays in update mode, turn it off and on)")
         ota.link.close()
         if not finished:
             raise InstallError("lost" if lost else "stopped",
@@ -425,6 +434,10 @@ def not_found(up):
     where = f"no MIDI port matching {up.port!r} answered" if up.port else "BlackBox not found"
     return InstallError("notfound", f"{where} (USB data cable? another app using it?)"
                         f"\n  MIDI inputs: {', '.join(names) if names else '(none)'}")
+
+
+class SameFirmware(Exception):
+    """the loader keeps re-reading the head: the package is identical to the installed firmware"""
 
 
 class Progress:

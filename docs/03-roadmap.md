@@ -64,6 +64,11 @@ vendor's ANN engine, the official editor. Audio chain:
 - [x] Release builds by GitHub Actions (macOS universal + Windows), SHA-256 checksums
 - [ ] **First public test**: macOS and Windows testers
 - [x] Window staying at 99 %: the progress summed the bytes served, but the loader reads backwards (fixed, to confirm in the app)
+- [ ] **Captures: rename, and batch edits saved once** (user, 2026-11-05): add several captures, rename them, arrange them,
+  then one "Save to pedal" that writes everything with a single restart (today every write restarts the pedal). Renaming needs a
+  firmware command that rewrites a slot's header (the weights read back from XIP)
+- [ ] **v0.18 sound problems** (user test, 2026-11-05): digital-sounding distortion in every mode, bypass loud but distorted, NAM
+  output very low (OUT meter under half), one freeze with no sound after switching (only a power cycle brought it back)
 - [x] **Installer update check** (v0.18: GitHub releases/latest, banner with the download link): on start, ask the GitHub Releases API for the latest release, compare with the app's
   version and offer the download (link to the release page + checksum); make sure a newer app can always update the pedal
   from any older Juice-Box or the stock firmware
