@@ -3469,7 +3469,7 @@ static void debug_service(void)                   /* our SysEx; anything else st
          *        accel broken, errors), then O 2 i pack7(16 floats) for i = 0..3: the last block's raw output */
         static uint8_t msg[96];
         static float last[64];
-        uint32_t r[7], k, i;
+        uint32_t r[8], k, i;
         ota_frame_done();
         if (p[4] == 0u) {
             const uint32_t slot = ms_active, w0 = fm1_ticks();
@@ -3509,9 +3509,9 @@ static void debug_service(void)                   /* our SysEx; anything else st
             if (onyx_ready)
                 onyx_run(blocks > 2000u ? 2000u : blocks, r, last, poll);
             else
-                r[0] = r[1] = r[2] = r[3] = r[4] = r[5] = 0;
+                r[0] = r[1] = r[2] = r[3] = r[4] = r[5] = r[6] = r[7] = 0;
             msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 'J'; msg[3] = 'B'; msg[4] = 'O'; msg[5] = 1;
-            k = 6u + ota_pack7((const uint8_t *)r, 24, msg + 6);
+            k = 6u + ota_pack7((const uint8_t *)r, 32, msg + 6);
             msg[k++] = 0xF7;
             ota_wire_send(msg, k);
             for (i = 0; i < 4u; i++) {

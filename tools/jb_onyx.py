@@ -77,9 +77,9 @@ if len(st4) == 4:
 st = [g for g in rr if g[5] == 1]
 if not st:
     raise SystemExit("no answer to the run")
-blocks, mn, mean, mx, broken, errs = struct.unpack("<6I", unpack7(st[0][6:-1])[:24])
+blocks, mn, mean, mx, broken, errs, stk, guard = struct.unpack("<8I", unpack7(st[0][6:-1])[:32])
 print(f"pedal: {blocks} blocks of 64 samples: {mn / 24:.0f} / {mean / 24:.0f} / {mx / 24:.0f} us min / mean / max "
-      f"(real time: 1451 us), accelerator broken {broken}, errors {errs}")
+      f"(real time: 1451 us), accelerator broken {broken}, errors {errs}; stack used {stk} B, guard words hit {guard}")
 parts = {g[6]: unpack7(g[7:-1])[:64] for g in rr if g[5] == 2}
 dev = struct.unpack("<64f", b"".join(parts[i] for i in sorted(parts))) if len(parts) == 4 else None
 
