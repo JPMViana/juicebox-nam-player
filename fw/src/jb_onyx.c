@@ -43,8 +43,8 @@ static uint8_t om_irq_off;                       /* 1: interrupts off around eve
 
 /* diagnostics: asm bit 0 = 0 forces the C version of the CPU stage, bit 1 = every accelerator job in software; irq_off = 1 masks the interrupts around every block */
 extern void pa_hw_accel_force_sw(int on);
-extern volatile uint32_t jb_ready_delay;
-void onyx_options(uint32_t asm_on, uint32_t irq_off) { jb_ready_delay = (irq_off >> 1) * 16u; irq_off &= 1u; s_wn_asm = (asm_on & 1u) ? s_wn_asm : 0u; om_irq_off = (uint8_t)irq_off; pa_hw_accel_force_sw((asm_on & 2u) != 0u); }
+extern volatile uint32_t jb_ready_delay, jb_verify;
+void onyx_options(uint32_t asm_on, uint32_t irq_off) { jb_ready_delay = (irq_off >> 1) * 16u; irq_off &= 1u; s_wn_asm = (asm_on & 1u) ? s_wn_asm : 0u; om_irq_off = (uint8_t)irq_off; pa_hw_accel_force_sw((asm_on & 2u) != 0u); jb_verify = (asm_on & 4u) ? 1u : 0u; if (jb_verify) for (int i = 0; i < 16; i++) ((volatile uint32_t *)0x01C7D200u)[i] = 0; }
 
 uint32_t onyx_model_size(void) { return (uint32_t)sizeof(pa_wavenet_model_t); }
 

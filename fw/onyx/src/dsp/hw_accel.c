@@ -185,6 +185,43 @@ void pa_hw_accel_force_sw(int on) {
 }
 
 volatile uint32_t jb_ready_delay;                 /* Juice-Box: see pa_hw_accel_wait_lean */
+/* Juice-Box (diagnostic): jb_verify = 1 recomputes every conv-mode job on the CPU when it completes and compares the rows; the
+ * count and the first bad job are kept at SRAM 0x01C7D200 (survives a reset): [0] "JBVF", [1] jobs checked, [2] bad jobs,
+ * [3..8] the bad job's command, [9] row, [10] got, [11] want, [12] bad rows in it, [13] that job's number */
+volatile uint32_t jb_verify;
+#if !defined(PA_HOST_BUILD) && !defined(PA_HOST_SIM)
+#define JB_VF ((volatile uint32_t *)(uintptr_t)0x01C7D200u)
+static pa_hw_vec_cmd_t jb_vcmd;
+static uint8_t jb_vpend;
+static void jb_vcheck(void) {
+    const pa_hw_vec_cmd_t *c = &jb_vcmd;
+    jb_vpend = 0;
+    if (c->config != PA_HW_CFG_MATVEC || (c->stride & 0xFFFFu) == 0u || (c->stride & 0xF000u) != 0u) return;
+    const int32_t *A = (const int32_t *)c->src_a, *B = (const int32_t *)c->src_b;
+    const int32_t *D = (const int32_t *)c->dst;
+    const uint32_t shift = c->ctrl >> 24, cols = c->ctrl & 0xFFFu, rows = (c->ctrl >> 12) & 0xFFFu;
+    const uint32_t step = (c->stride & 0xFFFFu) >> 2, dstep = ((c->stride >> 20) & 0xFu) >> 2;
+    uint32_t bad = 0, br = 0; int32_t bg = 0, bw = 0;
+    if (JB_VF[0] != 0x4656424Au) { for (int i = 0; i < 16; i++) JB_VF[i] = 0; JB_VF[0] = 0x4656424Au; }
+    for (uint32_t r = 0; r < rows; r++) {
+        int64_t acc = 0;
+        for (uint32_t j = 0; j < cols; j++) acc += (int64_t)A[r * step + j] * (int64_t)B[j];
+        acc = (acc + (shift ? (1LL << (shift - 1)) : 0LL)) >> shift;
+        if (acc > 2147483647LL) acc = 2147483647LL;
+        if (acc < -2147483648LL) acc = -2147483648LL;
+        if (D[r * dstep] != (int32_t)acc) { if (!bad) { br = r; bg = D[r * dstep]; bw = (int32_t)acc; } bad++; }
+    }
+    JB_VF[1] = JB_VF[1] + 1u;
+    if (bad) {
+        if (JB_VF[2] == 0u) {
+            JB_VF[3] = c->config; JB_VF[4] = (uint32_t)(uintptr_t)c->src_a; JB_VF[5] = (uint32_t)(uintptr_t)c->src_b;
+            JB_VF[6] = (uint32_t)(uintptr_t)c->dst; JB_VF[7] = c->ctrl; JB_VF[8] = c->stride;
+            JB_VF[9] = br; JB_VF[10] = (uint32_t)bg; JB_VF[11] = (uint32_t)bw; JB_VF[12] = bad; JB_VF[13] = JB_VF[1];
+        }
+        JB_VF[2] = JB_VF[2] + 1u;
+    }
+}
+#endif
 /* LEAN protocol for the WaveNet block engine (140 jobs a block): only the register protocol, as the stock's driver does - no timer reads (peripheral reads
  * are slow), no breadcrumbs, no statistics; the wait is bounded by a spin count, not by the timer. The standard submit/wait cost about 1 us a job. */
 #define PA_HW_LEAN_SPINS 60000u         /* about 3 ms of polling: a 731 us job takes under 9,000 */
@@ -207,6 +244,7 @@ void pa_hw_accel_wait_lean(void) {
     (void)reg[0];
     __asm__ volatile("csync" ::: "memory");       /* Juice-Box: the results are read only after this */
     g_hw_busy = 0u;
+    if (jb_vpend) jb_vcheck();
 #endif
 }
 
@@ -217,6 +255,7 @@ void pa_hw_accel_submit_lean(const pa_hw_vec_cmd_t *cmd) {
     if (g_hw_broken) { accel_software(cmd); return; }
     volatile uint32_t *reg = (volatile uint32_t *)PA_HW_VEC_BASE;
     jb_joblog(cmd->config, cmd->src_a, cmd->src_b, cmd->dst, cmd->ctrl, cmd->stride);
+    if (jb_verify) { jb_vcmd = *cmd; jb_vpend = 1; }
     g_hw_cmd_block = *cmd;
     __asm__ volatile("csync" ::: "memory");       /* Juice-Box: barrier before START */
     reg[2] = 0u;
@@ -237,6 +276,7 @@ void pa_hw_accel_job_lean(uint32_t config, const void *a, const void *b, void *d
         if (!g_hw_broken) {
             volatile uint32_t *reg = (volatile uint32_t *)PA_HW_VEC_BASE;
             jb_joblog(config, a, b, dst, ctrl, stride);
+            if (jb_verify) { jb_vcmd.config = config; jb_vcmd.src_a = a; jb_vcmd.src_b = b; jb_vcmd.dst = dst; jb_vcmd.ctrl = ctrl; jb_vcmd.stride = stride; jb_vpend = 1; }
             g_hw_cmd_block.config = config; g_hw_cmd_block.src_a = a; g_hw_cmd_block.src_b = b;
             g_hw_cmd_block.dst = dst; g_hw_cmd_block.ctrl = ctrl; g_hw_cmd_block.stride = stride;
             __asm__ volatile("csync" ::: "memory");   /* Juice-Box: the CPU's stores reach SRAM before the unit reads */
