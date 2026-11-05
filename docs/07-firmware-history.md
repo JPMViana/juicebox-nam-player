@@ -5,6 +5,30 @@ Name: **Juice-Box**, by **João Viana** (until v0.1.2: armaria-nam). Identity in
 
 Newest first. "Package" is the identity the pedal reports (`BlackBox_NNN`).
 
+## v0.18.0-dev, 983–990 (2026-11-05) — Onyx's NAM engine on the accelerator: works, needs VDC14 = 1.60 V
+
+Onyx's A2-Lite block engine (`fw/onyx`, [09](09-onyx-analysis.md)) runs as a USB test (`JBO`, `fw/src/jb_onyx.c`,
+`tools/jb_onyx.py`): the normal NAM is stopped, the active capture is loaded into Onyx's engine in the same memory, N blocks of
+a test input run on core 0, and the output is compared with the same weights on the Mac (`nam/test/wn_onyx_dev.c`).
+
+| Finding | Evidence |
+|---|---|
+| **The engine is correct and fits one core**: 1369–1414 µs per 64-sample block (real time 1451 µs), at 240 MHz | 1000–2000 block runs, output equal to the Mac within 3e-5 (raw head output, peak ~45) |
+| **At the boot voltages (VDC14 1.50 V, SYSVDD 1.32 V) results are sporadically wrong** (or the pedal crashes: `axi_rd_inv`, corrupted RAM) | 1.50 V: wrong in most 1000-block runs; 1.55 V: 1 in 6 wrong; **1.60 V: 12 of 12 right**, interrupts on or off |
+| Every accelerator job is exact when checked one by one | `--verify`: 28,000 jobs recomputed on the CPU, 0 wrong (the slow check hides the margin problem) |
+| The engine uses 992 B of stack; nothing writes past it | private painted stack with a guard (987) |
+| Earlier guesses that turned out wrong: "the assembly is not interrupt-safe", "a missing barrier", "READY before the last write" | all fixed by the voltage alone; the barrier and the read-back stay (harmless) |
+
+Same family of problem as v0.13.15: dense bus traffic (now the CPU **and** the accelerator) needs more LDO headroom. VDC14
+level 7 (1.60 V) is the top of the field; the core voltage (SYSVDD) is unchanged.
+
+Diagnostics kept for now: `JBO 3` (C stage, software accelerator, interrupts, settle time, per-job verify, read-back),
+`JBO 4` (per-layer state; differs from the Mac by rounding in the assembly stage only), the job log at `0x01C7D000`
+(`tools/jb_joblog.py`), the verify log at `0x01C7D200` (`tools/jb_verify.py`).
+
+Next: put the engine in the audio path (two 64-sample blocks per 128-sample half; on core 1, the conditioning and output stage
+on core 0 as Onyx does), VDC14 = 1.60 V at boot, then the IR on the freed core.
+
 ## v0.17.1 (2026-11-05) — the matrix accelerator works on the BlackBox
 
 `BlackBox_981`: command `JBD t` (`tools/jb_accel.py`) runs one job on the matrix × vector unit at `0x01EE0400`

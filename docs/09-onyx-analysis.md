@@ -61,6 +61,12 @@ the stock "ANN" engine very likely does the same.
 ~1.5k multiply-adds per sample (≈ 66 MMAC/s at 44.1 kHz), about 80 % of the unit, in parallel with the CPU, which is left
 with the gathers, the activations and the 1x1 mixes. See [07](07-firmware-history.md#v0171-2026-11-05--the-matrix-accelerator-works-on-the-blackbox).
 
+## Running Onyx's engine on the BlackBox (v0.18.0-dev)
+
+Works: same output as the Mac, 1369–1414 µs per 64-sample block on one core at 240 MHz — but only with **VDC14 = 1.60 V**
+(at 1.50 V the CPU + accelerator traffic gives sporadically wrong results). Details in
+[07](07-firmware-history.md). Local changes to the copied files are listed in `fw/onyx/README.md`.
+
 ## What it means for us
 
 1. **Using the accelerator for the A2-Lite convolutions** could free most of one core: the per-layer convolutions are the
